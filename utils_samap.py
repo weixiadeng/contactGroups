@@ -130,20 +130,55 @@ def _neighbor_joining(s, cluster_name, _fn_cluster_vectors=_mean_expression, _fn
     return oi2label, linkage_order
 
 
-# np version of entropy
+# np version of entropy (row-wise)
 def _h_np(mat):
     nm = mat/(mat.sum(axis=1).reshape(-1, 1))
     lnm = np.where(nm!= 0, np.log2(nm), 0)
     return -(nm*lnm).sum(axis=1)
 
-# scipy version of entropy
+# scipy version of entropy (row-wise)
 def _h_sp(mat):
-    print("sp")
     nm = mat.multiply(np.reciprocal(mat.sum(axis=1))) # row sum normalized matrix
     lnm = nm.copy()
     lnm.data = np.log2(lnm.data)
     lnm.eliminate_zeros()
     return -np.asarray(nm.multiply(lnm).sum(axis=1))
+
+# calculate entropy using .mtx file
+# merge entropy and clusterID using cell names 
+# output average entropy for each clusterID
+# input: in.mtx: RDS exported mtx (row: gene, col: cell)
+# input: in.cellnames: RDS exported cell names
+# input: cluster_name: metadata name for which the average entropy calculated
+# output: tsv file: {clusterID average_entropy}
+# kjia@DESKTOP-L0MMU09 ~/workspace/coral/stage.acropora_raw 2025-01-23 15:22:56
+# $ python utils_samap.py cluster_entropy 10.ad.counts.mtx 10.ad.col.txt 10.ad.clusters.tsv samap_family tt
+def cluster_entropy(args):
+    assert len(args) == 5, 'Usage: python utils_samap.py cluster_entropy in.mtx in.cellnames cluster_name out.tsv'
+    mtxfile = args[0]
+    cellnamefile = args[1]
+    clusterfile = args[2]
+    cluster_name = args[3]
+    outfile = args[4]
+
+    mat = sp.io.mmread(mtxfile).astype(float)
+    mat = mat.T # RDS exported mtx 
+    h_vec = _h_sp(mat)
+
+    #cell_names = pd.read_csv(cellnamefile, header=None, sep='\t', index_col=0)
+    #cell_names = pd.read_csv(cellnamefile, header=None, sep='\t')
+    cell_names = cp.loadlines(cellnamefile)
+    df_cell_entropy = pd.DataFrame({'cell_id':cell_names, 'entropy': h_vec.flatten()})
+
+    cluster_assignments = pd.read_csv(clusterfile, sep='\t', index_col=0)
+    df_cell_clusterID = cluster_assignments[[cluster_name]].reset_index().rename(columns={'index': 'cell_id'})
+    
+    merged_df = pd.merge(df_cell_entropy, df_cell_clusterID, on='cell_id')
+    df_cluster_entropy = merged_df.groupby(cluster_name)['entropy'].mean().reset_index()
+
+    df_cluster_entropy.to_csv(outfile, sep='\t', header=None, index=False)
+    cp._info('save average entropy for %s to %s' % (cluster_name, outfile))
+
 
 # calculate expression entropy for given expression matrix
 # assuming rows are cells and columns are genes
@@ -161,7 +196,10 @@ def expression_entropy(args):
     print("examine the entropy dimension with number of cells: ")
     print(h_vec.shape)
 
-    nfeature = np.array(mat.getnnz(axis=1)).reshape(-1,1)
+    # 1. getnnz(axis=1): counting non-zero elements along each row; returns a single row with each element represents the nonzero counts in each row of mat
+    # 2. reshape(-1,1): concatenate rows then convert into a single column
+    nfeature = np.array(mat.getnnz(axis=1)).reshape(-1,1) 
+
     # output format: entropy row_sum
     np.savetxt(outfile, np.hstack((h_vec.reshape(-1,1), np.asarray(mat.sum(axis=1)), nfeature)), fmt='%.8f')
     cp._info('save entropy, nCounts, nFeatures to %s' % outfile)

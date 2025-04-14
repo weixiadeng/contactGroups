@@ -174,6 +174,7 @@ def append_gn_tax(args):
         jsonline = '{"results":'+line
 
         #print('New json: '+jsonline)
+        gnv='_NA_'
         jo = json.loads(jsonline)
         try:
             uid = jo['results'][0]['primaryAccession']
@@ -184,6 +185,7 @@ def append_gn_tax(args):
         except Exception as e:
             print(e)
             print(jsonline)
+            gnv='_NA_'
         outlist.append('%s\t%s\t%s' % (uid, tax, gnv))
         jsonline=''
     fp.close()
@@ -241,10 +243,12 @@ def ann_merge(args):
     df=df.loc[df['Gene_name']!='_NA_']
 
     #f=lambda x: ','.join(list(x))
-    f = lambda x: ','.join(x.sort_values(by='PROST_distance', key=lambda col: col.astype(float))['Gene_name'].tolist())
+    #f = lambda x: ','.join(x.sort_values(by='PROST_distance', key=lambda col: col.astype(float))['Gene_name'].tolist())
+    # some gene name can be just a number, map to string explicitly!
+    f = lambda x: ','.join(map(str, x.sort_values(by='PROST_distance', key=lambda col: col.astype(float))['Gene_name'].tolist()))
 
     # extract human hits
-    dh = df.loc[df['Taxon_ID']== 9606]
+    dh = df.loc[df['Taxon_ID']== '9606'] # after mixing with _NA_, a string is needed
     #dh = dh.groupby('Query_gene_ID')['Gene_name'].apply(f).reset_index()
     dh = dh.groupby('Query_gene_ID').apply(f).reset_index()
     dh.set_index('Query_gene_ID', inplace=True)
@@ -252,7 +256,7 @@ def ann_merge(args):
     dh.rename(columns={0: 'PROST_gene_name(Human)'}, inplace=True)
 
     # extract drome hits
-    dd = df.loc[df['Taxon_ID']== 7227]
+    dd = df.loc[df['Taxon_ID']== '7227']
     #dd = dd.groupby('Query_gene_ID')['Gene_name'].apply(f).reset_index()
     dd = dd.groupby('Query_gene_ID').apply(f).reset_index()
     dd.set_index('Query_gene_ID', inplace=True)
@@ -294,7 +298,7 @@ def ann_merge(args):
         else:
             return _t(v3)
 
-    sele_df = pd.DataFrame({'prost_alias': outdf.apply(_choose_alias, axis=1)})
+    sele_df = pd.DataFrame({'geneID_alias': outdf.apply(_choose_alias, axis=1)})
     sele_df.index = outdf.index
     sele_df.index.names=['geneID'] # make consistent with emapp final results for merging
     outfile = '21.geneID.geneAlias.tsv'
@@ -313,7 +317,7 @@ def ann_merge_alias(args):
     emapper_dict = emapper_df.set_index('geneID')['final_emapper_name'].to_dict()
 
     prost_df = pd.read_csv(prost_file, sep='\t')
-    prost_dict = prost_df.set_index('geneID')['prost_alias'].to_dict()
+    prost_dict = prost_df.set_index('geneID')['geneID_alias'].to_dict()
 
     out_dict = {}
     # make sure all keys are "_" seperated as "adig_s0001.g1"
@@ -443,6 +447,17 @@ def _apc_sym(sm):
 ############################################################################################
 # h5ad assembling functions  ---------------------------------------------------------------
 ############################################################################################
+# h5ad to mtx
+def _h5ad2mtx(h5file, out_pref=None):
+    pref = h5file if out_pref == None else out_pref
+    h=sc.read_h5ad(h5file)
+    h.obs[list(h.obs.columns)].to_csv('%s.assignments.tsv' % pref, sep='\t')
+    sp.io.mmwrite('%s.counts.mtx' % pref, (h.raw.X).T)
+    with open('%s.barcodes.tsv' % pref,'w') as fout:
+        fout.write('%s\n' % '\n'.join(h.obs_names.tolist()))
+    with open('%s.genes.tsv' % pref,'w') as fout:
+        fout.write('%s\n' % '\n'.join(h.raw.var_names.tolist()))
+    cp._info('export to %s.{genes, barcodes, assignments}.tsv/counts.mtx.' % pref)
 
 # generate sam h5ad file from expression counts
 def _samh5ad(h5file,outfile, umap=True, leiden=True):
@@ -502,18 +517,21 @@ def _slice_by_random(h5, n_cell, obs_droplist):
 
 # append clustering assignments to an h5ad file
 # nan will be renamed by unclustered_label
-def _append_assignments(h5, clusterfile, cluster_colnames=['cell_type'], index_name='index', unclustered_label='unclustered', delimiter='\t'):
+def _append_assignments(h5, clusterfile, cluster_colnames='na', index_name='index', unclustered_label='unlabeled', delimiter='\t'):
     #cluster_assignments = pd.read_csv(clusterfile, header=None, sep=delimiter, index_col=0, names=cluster_colnames)
+    # load with header
     cluster_assignments = pd.read_csv(clusterfile, sep=delimiter, index_col=0)
-    cluster_assignments.columns = cluster_colnames
+    if cluster_colnames!='na':
+        cluster_assignments.columns = cluster_colnames.split(',')
+        cp._info('Rename cluster names to %s' % cluter_colnames)
     cluster_assignments.index.name = index_name 
     h5.obs=h5.obs.merge(cluster_assignments, how='left', left_index=True, right_index=True)    
-    for c in cluster_colnames:
+    for c in cluster_assignments.columns:
         h5.obs[c].fillna(unclustered_label, inplace=True)
 
 
 
-# convert RDS converted .mtx {rowname,colname}.tsv files into an h5ad object
+# convert RDS exported .mtx {rowname,colname}.tsv files into an h5ad object
 # clusterfile: .tsv file without header line
 # the h5 and cluster info have the same index name
 def _mtx2h5ad(mtxfile, cellname_file, genename_file, index_name='index'):
@@ -530,17 +548,20 @@ def _mtx2h5ad(mtxfile, cellname_file, genename_file, index_name='index'):
     return h5
 
 # generate h5ad file from mtx file for coral project
-# python proc_coral_samap.py h5gen_mtx_cluster adig.counts.mtx adig.colnames.txt adig.rownames.txt ad_cluster_jake.tsv jake adig.counts.c_jake.h5ad
+# python proc_coral_samap.py h5gen_mtx_cluster adig.counts.mtx adig.colnames.txt adig.rownames.txt ad_cluster_jake.tsv c_alias1,c_alias2 adig.counts.c_jake.h5ad
 # >>> from proc_coral_samap import _mtx2h5ad, _append_assignments
 # >>> h = _mtx2h5ad('adig.counts.mtx', 'adig.colnames.txt', 'adig.rownames.txt')
 # >>> _append_assignments(h, 'ad_cluster_jake.tsv', ['jake'])
 # h5.write_h5ad('adig.counts.c_jake.h5ad'
 def h5gen_mtx_cluster(args):
-    assert len(args) == 6, 'Usage: python proc_coral_samap h5adgen mtxfile cellname_file genename_file cluster_file cluster_id outfile'
+    assert len(args) == 6, 'Usage: python proc_coral_samap.py h5gen_mtx_cluster counts.mtx col.txt row.txt clusetrs.tsv c_alias1,c_alias2 out.h5ad'
     cp._info('loading mtx ...')
     h5 = _mtx2h5ad(args[0], args[1], args[2])
     cp._info('appending clustering assignments ...')
-    _append_assignments(h5, args[3], [args[4]])
+
+    #cluster_alias = args[4]# 'na' or ['cname1','cname2', ...]
+    _append_assignments(h5, args[3], args[4])
+
     cp._info('done.')
     h5.write_h5ad(args[5])
     cp._info('save to %s' % args[5])
@@ -1061,6 +1082,17 @@ def _default_parser(slist, arg):
     idx = df.groupby(['output_id'])['length'].idxmax()
     return df.loc[idx]
 
+# do not remove redundant sequences
+def _default_nomax_parser(slist, arg):
+    cp._info('use default parser.')
+    seqs = [[s[0], s[0], s[1], len(s[1])] for s in slist]
+    df = pd.DataFrame(seqs, columns=['output_id','old_id', 'seq', 'length'])
+    df.to_csv(arg+'.stat.list', columns=['output_id', 'old_id', 'length'], sep='\t', header=False, index=False)
+    #idx = df.groupby(['output_id'])['length'].idxmax()
+    #return df.loc[idx]
+    return df
+
+
 # process proteome data
 # 0. remove abnormal alphabets, save stat to *.ab.list
 # 1. map header to andata.obs names
@@ -1071,8 +1103,7 @@ def process_proteome(args):
     _parser_list = { 
         'def':_default_parser, 'nt': _nt_parser, 'at': _at_parser,'ad': _ad_parser, 'sl': _sl_parser, 'xe': _xe_parser, 
         'hy': _hy_parser, 'sp': _sp_parser, 'nv': _nv_parser, 'tr': _tr_parser, 'pd': _pd_parser,
-        'pacbio-transcriptome': _pt_parser
-
+        'pacbio-transcriptome': _pt_parser, 'def_nm': _default_nomax_parser
         }
 
     proteome_file = args[0]

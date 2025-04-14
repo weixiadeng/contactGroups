@@ -815,7 +815,7 @@ def getbatchmsa(arglist):
 	for h,s in pfm.msalist:
 		if h in headerset:
 			outmsalist.append('>%s\n%s' % (h,s))
-			outseqlist.append('>%s\n%s' % (h,s.translate(None, ''.join(cp.gaps))))
+			outseqlist.append('>%s\n%s' % (h,s.translate(str.maketrans('','',''.join(cp.gaps)))))
 
 	outmsafile = outprefix+'_msa.fa'
 	with open(outmsafile, 'w') as fout:
@@ -1184,6 +1184,38 @@ def psicovaln(arglist):
 			fp.write('%s\n' % s[1].replace('.', '-'))
 	cp._info('save to %s' % outfile)
 
+# rename all sequence according to name_mappings
+# name_mapping: tsv file: orig_name\tnew_name
+def rename_seq(args):
+	assert len(args) == 3, 'Usage: python utils_pfammsa.py rename_seq msafile.fa name_mappinng.txt outfile'
+	msafile = args[0]
+	name_mapping_file = args[1]
+	outfile = args[2]
+
+	# load name mapping 
+	dict_nm = dict((m[0], m[1]) for m in cp.loadtuples(name_mapping_file, '\t')) 
+	pfm = pfammsa(msafile)
+	with open(outfile, 'w') as fout:
+		for s in pfm.msalist:
+			title = '%s' % dict_nm[s[0]] if s[0] in dict_nm else s[0]
+			fout.write('>%s\n%s\n' % (title, s[1]))
+	cp._info('save renamed seq file to %s' % outfile)
+
+def rename_seq_prefix(args):
+	assert len(args) == 4, 'Usage: python utils_pfammsa.py rename_seq_prefix in.fa prefix delimiter outfile'
+	fafile = args[0]
+	prefix = args[1]
+	delimiter = args[2]
+	outfile = args[3]
+
+	cp._info('appending [%s] with delimiter [%s] to titles' % (prefix, delimiter))
+	outfa = ['>%s%s%s\n%s' % (prefix,delimiter,s[0],s[1]) for s in cp.fasta_iter(fafile)]
+	with open(outfile, 'w') as fout:
+		fout.write('%s\n' % '\n'.join(outfa))
+	cp._info('save fafile with new title to %s' % outfile)
+
+
+
 # format header for dca calculation
 def retitle(args):
 	assert len(args) == 2, 'Usage: python utils_pfammsa.py retile msafile.fa outfile'
@@ -1437,41 +1469,40 @@ def slicefa(args):
 # split fasta file into separate .fa file
 # filename: prefix.00001.fa
 def splitfa(arglist):
-	if len(arglist)<3:
-		cp._err('Usage: python utils_pfammsa.py splitfa fastfile outprefix padding')
+	assert len(arglist) == 3, 'Usage: python utils_pfammsa.py splitfa fastfile outprefix padding'
+	from tqdm import tqdm
 
 	fastafile = arglist[0]
 	outprefix = arglist[1]
 	padding = int(arglist[2])
 
-	count=0
-	for head, seq in cp.fasta_iter(fastafile):
+	count=1
+	for head, seq in tqdm(cp.fasta_iter(fastafile)):
 		outfafile = '%s.%s.fa' % (outprefix, str(count).zfill(padding))
 		with open(outfafile, 'w') as fp:
 			fp.write('>%s\n%s' % (head, seq))
 		count+=1
-	cp._info('%s : save %d .fa files' % (fastafile, count))
+	cp._info('%s : save %d .fa files' % (fastafile, count-1))
 
 
 # for coverage vs EPQ homology testing
 # split fasta file into separate .fa file
 # filename: prefix.00001.a-1-1.fa
 def splithidfa(arglist):
-	if len(arglist)<3:
-		cp._err('Usage: python utils_pfammsa.py splithidfa fastfile outprefix padding')
-
+	assert len(arglist) == 3, 'Usage: python utils_pfammsa.py splithidfa fastfile outprefix padding'
+	from tqdm import tqdm
 	fastafile = arglist[0]
 	outprefix = arglist[1]
 	padding = int(arglist[2])
 
-	count=0
-	for head, seq in cp.fasta_iter(fastafile):
+	count=1
+	for head, seq in tqdm(cp.fasta_iter(fastafile)):
 		hid = head.split(' ')[1]
 		outfafile = '%s.%s.%s.fa' % (outprefix, str(count).zfill(padding), hid)
 		with open(outfafile, 'w') as fp:
 			fp.write('>%s\n%s' % (head, seq))
 		count+=1
-	cp._info('%s : save %d .fa files' % (fastafile, count))
+	cp._info('%s : save %d .fa files' % (fastafile, count-1))
 
 
 # same function with splitidfa
@@ -2178,6 +2209,8 @@ def main():
 		'msareduce_byseq': msareduce_byseq,
 		'pairsubstitution': pairsubstitution,
 		'psicovaln': psicovaln,
+		'rename_seq': rename_seq, # rename sequence title according to a name mapping file
+		'rename_seq_prefix': rename_seq_prefix, # rename all sequence title by appending a prefix
 		'retitle': retitle, # format header for dca calculation
 		'retitlebyfield': retitlebyfield,
 		'remove_duplicate': remove_duplicate,

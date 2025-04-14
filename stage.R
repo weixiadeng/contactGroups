@@ -18,14 +18,14 @@ library(gridExtra)
 library(ROCR)
 library(GO.db)
 library(goseq)
-library(conflicted)
+#library(conflicted)
 #BiocManager::install("goseq")
 #BiocManager::install("GO.db")
 
 setwd('C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw')
 
 rm(list=ls())
-source('coral_ppl.R')
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
 
 #load('ad3456.clean.sym_split.rd')
 load('ad3456.clean.sym_split.filtered.rd') # after remove small clusters
@@ -41,6 +41,118 @@ obj <- ad3456.clean
 setwd('C:\\Users\\kjia\\workspace\\foxd\\stage')
 rm(list=ls())
 source('coral_ppl.R')
+
+###################################################
+setwd('C:\\Users\\kjia\\workspace\\others\\roy\\stage')
+rm(list=ls())
+source('coral_ppl.R')
+dm2023_obj <- mtx2seurat('dm2023.counts.mtx', 'dm2023.barcodes.tsv', 'dm2023.genes.tsv', 'dm2023.assignments.tsv', 'dm2023')
+save(dm2023_obj, file=dm2023.seurat.rd) 
+
+###################################################
+# foxd homolog genes vlnplot & barplot ad, at, sp, xe, nt 
+# kjia@DESKTOP-L0MMU09 ~/workspace/foxd/stage.foxd_gene_expression 2025-03-12 18:46:35
+
+# foxd targets vlnplot & barplot ad, at, sp, xe, nt
+# kjia@DESKTOP-L0MMU09 ~/workspace/foxd/stage.related_genes 2025-02-06 11:11:31
+# kjia@DESKTOP-L0MMU09 ~/workspace/foxd/stage 2024-12-10 17:04:27
+
+setwd('C:\\Users\\kjia\\workspace\\foxd\\stage.foxd_gene_expression')
+
+# load foxd homologs as a dictionary
+genes<- read.delim("04.foxd_name.mapping.tsv", header = FALSE)
+gdict <- setNames(as.list(genes$V2), genes$V1)
+
+
+rm(std_obj)
+load('01.nt.info2.rd')
+pref <- "nt" 
+#gene_names <- read.csv(paste0('10.fox_targets.',pref,'.tsv'), header = FALSE, sep = "\t")
+#gene_names <- read.csv('fox_targets.nt.list', header = FALSE, sep = "\t")
+gene_names <- read.csv('foxd_homologs.nt.list', header = FALSE, sep = "\t")
+
+
+rm(std_obj)
+load('01.ad3456.clean.samap_family.rd')
+pref <- "ad"
+#gene_names <- read.csv('fox_targets.ad.list', header = FALSE, sep = "\t")
+gene_names <- read.csv('foxd_homologs.ad.list', header = FALSE, sep = "\t")
+
+
+rm(std_obj)
+load('01.at345.clean.samap_family.rd')
+pref <- "at"
+#gene_names <- read.csv('fox_targets.at.list', header = FALSE, sep = "\t")
+gene_names <- read.csv('foxd_homologs.at.list', header = FALSE, sep = "\t")
+
+
+rm(std_obj)
+load('sp.seurat.info3.rd')
+pref <- "sp"
+#gene_names <- read.csv('fox_targets.sp.list', header = FALSE, sep = "\t")
+gene_names <- read.csv('foxd_homologs.sp.list', header = FALSE, sep = "\t")
+
+
+#xe.seurat.info3.rd
+rm(std_obj)
+load('xe.seurat.info3.rd')
+pref <- "xe"
+#gene_names <- read.csv('fox_targets.xe.list', header = FALSE, sep = "\t")
+gene_names <- read.csv('foxd_homologs.xe.list', header = FALSE, sep = "\t")
+
+
+# foxd target does not include hy
+# hy.seurat.info3.rd
+rm(std_obj)
+load('hy.seurat.info3.rd')
+pref <- "hy"
+#gene_names <- read.csv('fox_targets.xe.list', header = FALSE, sep = "\t")
+gene_names <- read.csv('foxd_homologs.hy.list', header = FALSE, sep = "\t")
+
+
+gene_set <- gsub("_", "-", gene_names[[1]])
+gene_set <- gene_set[gene_set %in% rownames(std_obj)]
+length(gene_set)
+#cname = 'samap_family'
+cname = 'cell_type_family'
+Idents(std_obj) <- std_obj$cell_type_family
+#Idents(std_obj) <- std_obj$samap_family
+
+# foxd vlnPlt
+for (gene in gene_set) {
+  gg <- VlnPlot(std_obj, features = gene, ncol=1, pt.size = 0, group.by = cname) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) + NoLegend()
+  #outname = paste0(pref,'_vlnplot_',cname,'_',gene,'_','.pdf')
+  outname = paste0(pref,'_vlnplot_', gdict[[gene]],'_','.pdf')
+  
+  print(outname)
+  ggsave(file=outname, plot=gg, width = 16, height = 10)  
+}
+
+# barplt
+average_expression <- AverageExpression(std_obj, features = gene_set, layer="counts")
+for (gene in gene_set) {
+  gene_expression <- average_expression$RNA[gene, ]
+  gene_df <- data.frame(Cluster = names(gene_expression),Expression = as.numeric(gene_expression))
+  
+  gg <- ggplot(gene_df, aes(x = Cluster, y = Expression, fill = 'red'))  +
+    geom_bar(stat = "identity") +
+    ggtitle(gene) +
+    labs(x = "Cluster", y = "Average raw counts") +
+    theme_minimal() +
+    NoLegend()
+  
+  gg <- gg + theme(axis.text.x = element_text(size=16, angle = 90, hjust = 1))
+  
+  #outname = paste0(pref,'_barplot_',cname,'_',gene,'_','.pdf')
+  outname = paste0(pref,'_barplot_',gdict[[gene]],'_','.pdf')
+  print(outname)
+  #ggsave(file=outname, plot=gg, width = 16, height = 12) # for samap_family
+  #ggsave(file=outname, plot=gg, width = 32, height = 8) # metacell
+  #ggsave(file=outname, plot=gg, width = 24, height = 8) # nt cell type
+  ggsave(file=outname, plot=gg, width = 16, height = 8) # cell type family
+}
+
 
 ###################################################
 # foxd vlnplot & barplot ad, at, ch
@@ -453,10 +565,9 @@ outname = paste0(pref,'_FOX_total_expression_orthofinder.pdf')
 #outname = paste0(pref,'_FOX_total_expression_prost.pdf')
 outname
 ggsave(file=outname, plot=gplot, width = 15, height = 8)
-
 ######################################################
-# acropora cell type tree 20241218
-# 
+######################################################
+# acrropora cluster entropy 20250122
 library(tidyr)
 library(tibble)
 library(ggplot2)
@@ -473,11 +584,209 @@ setwd('C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw')
 rm(list=ls())
 source('coral_ppl.R')
 
+
+load('10.at.clean.sym_split.filtered.smap_names.rd')
+obj <- std_obj.v1223
+prf = '10.at.' 
+
+load('10.ad.clean.sym_split.filtered.smap_names.rd')
+obj <- std_obj
+prf = '10.ad.' 
+
+# examine rd version
+Idents(obj) <- obj$merged_clusters
+levels(obj)
+t<-table(Idents(obj))
+t[t<45] # confirmed no small clusters
+
+# output mtx file for entropy calculation
+# save highly variable genes
+hg <- VariableFeatures(FindVariableFeatures(obj, selection.method = "vst", nfeatures = 3000))
+sub_obj <- obj[hg,]
+#write(x = hg, file = paste0(prf, "variable_genes.txt"))
+
+# save to mtx 
+writeMM(obj = sub_obj[["RNA"]]$counts, file = paste0(prf, "counts.mtx"))
+writeMM(obj = sub_obj[["RNA"]]$data, file = paste0(prf, "counts.mtx"))
+write(x = rownames(sub_obj), file = paste0(prf, "row.txt"))
+write(x = colnames(sub_obj), file = paste0(prf, "col.txt"))
+mdata <- sub_obj@meta.data
+write.table(mdata[, c("merged_clusters", "sym_split", "samap_family")], file = paste0(prf, "clusters.tsv"), sep = "\t", row.names = TRUE, quote = FALSE)
+
+# kjia@DESKTOP-L0MMU09 ~/workspace/coral/stage.acropora_raw 2025-01-23 15:22:56
+# $ python utils_samap.py cluster_entropy 10.ad.counts.mtx 10.ad.col.txt 10.ad.clusters.tsv samap_family tt
+
+# debug
+sum(rownames(obj) != rownames(obj[["RNA"]]$counts))
+sum(colnames(obj) != colnames(obj[["RNA"]]$counts))
+
+
+######################################################
+# acropora cell type tree 20241218 20250317 20250402
+# kjia@DESKTOP-L0MMU09 ~/workspace/library/repository/SATURN/stage.coral 2025-03-17 11:14:47
+
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(tidyverse)
+library(Seurat)
+library(pheatmap)
+library(ape)
+library(reticulate)
+library(DoubletFinder)
+library(glue)
+library(readr)
+
+setwd('C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw')
+rm(list=ls())
+#source('coral_ppl.R')
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+
+#####################################
+# 20250408 validate saturn cell type tree adat
+
+load('01.nt.seurat.info2.umap.rd')
+std_obj <- std_seurat_ppl(std_obj, umap = T)
+#std_obj <- RunUMAP(std_obj, dims = 1:40, min.dist = 0.1, umap.method = "umap-learn", metric = "cosine", verbose = FALSE)
+saveRDS(std_obj, file = "011.nt.seurat.info2.umap.rd")
+
+##
+load('10.ad.clean.sym_split.filtered.smap_names.rd')
+load('10.at.clean.sym_split.filtered.smap_names.rd')
+
+pc_features <- Seurat::Loadings(std_obj, reduction = "pca")
+top_genes <- unique(rownames(pc_features[, 1:40]))
+avg_expr <- AverageExpression(std_obj, features = top_genes, group.by = "samap_family")
+
+avg_expr <- AverageExpression(std_obj, group.by = "samap_family")
+#nj_matrix <- t(log1p(avg_expr$RNA))
+nj_matrix <- t(avg_expr$RNA)
+nj_matrix_dist <- dist(nj_matrix, method = "euclidean")
+nj_matrix_tree <- nj(nj_matrix_dist)
+plot(nj_matrix_tree)
+write.tree(nj_matrix_tree, file = "tree.at.cell_type.40pc.nwk")
+
+
+
+
+
+
+
+
+
+
+
+#####################################
+# 20250402 validate saturn cell type tree
+# To find out why nt  gastrodermis cluster stuck with alga-hosting_cells since nt does not have symbionts
+# check marker genes of: 
+
+# ad "alga-hosting_cells - gastrodermis (2) - g22"
+# at "alga-hosting_cells - gastrodermis (2) - g43" 
+# nt "all.gastrodermis.early.2"
+# sp "alga-hosting_cells"
+# xe "alga-hosting_cells"
+
+
 # load seurat objects {ad,at,sp,xe,nt}
 objs <- list()
-load('01.ad3456.clean.samap_family.rd')
+load('10.ad.clean.sym_split.filtered.smap_names.rd')
+objs[['ad']] <- std_obj
+load('10.at.clean.sym_split.filtered.smap_names.rd')
+objs[['at']] <- std_obj.v1223
+load('01.nt.seurat.info2.umap.rd')
+objs[['nt']] <- std_obj
+load('01.sp.seurat.info3.rd')
+objs[['sp']] <- std_obj
+load('01.xe.seurat.info3.rd')
+objs[['xe']] <- std_obj
+
+# get correct cluster names
+#unique(objs[['nt']]$cell_type)
+#levels(objs[['at']])
+#tt <- objs[['at']]
+
+clusters <- list()
+clusters[['ad']] <- "alga-hosting_cells - gastrodermis (2) - g22"
+clusters[['at']] <- "alga-hosting_cells - gastrodermis (2) - g43" 
+clusters[['nt']] <- "all.gastrodermis.early.2"
+clusters[['sp']] <- "alga-hosting_cells"
+clusters[['xe']] <- "alga-hosting_cells"
+
+metaNames <- list()
+metaNames[['ad']] <- 'samap_family'
+metaNames[['at']] <- 'samap_family'
+metaNames[['nt']] <- 'cell_type'
+metaNames[['sp']] <- 'cell_type'
+metaNames[['xe']] <- 'cell_type'
+
+
+#$ awk -F '\t' '{if(NR==1) print $0; else printf "%s\t%s %s\n", $1,$1,$2}' 21.sp.geneAlias.tsv > sp.gene_alias.tsv
+#$ awk -F '\t' '{if(NR==1) print $0; else printf "%s\t%s %s\n", $1,$1,$2}' 21.xe.geneAlias.tsv > sp.gene_alias.tsv
+yn_maps <- list()
+yn_maps[['ad']] <- read.csv("ad.gene_alias.tsv", header = TRUE, sep = "\t")
+yn_maps[['at']] <- read.csv("at.gene_alias.tsv", header = TRUE, sep = "\t")
+yn_maps[['nt']] <- c()
+yn_maps[['sp']] <- read.csv("sp.gene_alias.tsv", header = TRUE, sep = "\t")
+yn_maps[['xe']] <- read.csv("xe.gene_alias.tsv", header = TRUE, sep = "\t")
+
+for (n in names(clusters)){
+  print(n)
+  Idents(objs[[n]]) <- metaNames[[n]]
+  cluster_dotplots(objs[[n]], clusters[[n]], yn_maps[[n]], c(), n)
+}
+
+
+###### debug ######
+n='sp'
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+cluster_dotplots(objs[[n]], clusters[[n]], yn_maps[[n]], c(), n)
+
+
+
+
+#####################################
+# extract ad at count data as h5ad for SATURN integration
+load('10.ad.clean.sym_split.filtered.smap_names.rd')
+pref = '00.ad.4saturn'
+load('10.at.clean.sym_split.filtered.smap_names.rd')
+pref = '00.at.4saturn'
+
+cluster_list = c("samap_family", "sym_split", "sym_label", "orig.ident")
+seurat2mtx(std_obj.v1223, pref, cluster_list)
+
+load('01.nt.seurat.info2.umap.rd')
+pref = '00.nt.4saturn'
+cluster_list = c("cell_type", "cell_type_family")
+seurat2mtx(std_obj, pref, cluster_list)
+
+#####################################
+# load average expression file and generate tree
+#avg_expression <- read.table("average_expression.txt", header = TRUE, row.names = 1, sep = "\t")
+#dist_matrix <- dist(avg_expression)
+
+#dist_matrix <- read.table("distance_matrix.txt", header = TRUE, row.names = 1, sep = "\t")
+dist_matrix <- read.table("distance_matrix_PCs.txt", header = TRUE, row.names = 1, sep = "\t")
+tree <- nj(as.dist(dist_matrix))
+write.tree(tree, file = "tree.cell_type.saturn.pc40.gene_weight_default.nwk")
+png("tree_plot.png", width = 12, height = 60, units = "in", res = 300)
+plot(tree)
+dev.off()
+#BiocManager::install("ggtree")
+ggtree(tree, layout = 'unrooted') + geom_tiplab(aes(angle = branch.angle))
+
+# # kjia@DESKTOP-L0MMU09 ~/workspace/coral/stage.acropora_raw 2025-01-08 16:04:33
+# $ mv 01.ad3456.clean.samap_family.rd 10.ad.clean.sym_split.filtered.smap_names.rd
+
+
+
+# load seurat objects {ad,at,sp,xe,nt}
+objs <- list()
+#load('01.ad3456.clean.samap_family.rd')
+load('10.ad.clean.sym_split.filtered.smap_names.rd')
 objs[['Acropora.digitifera']] <- std_obj
-load('01.at345.clean.samap_family.rd')
+#load('01.at345.clean.samap_family.rd')
+load('10.at.clean.sym_split.filtered.smap_names.rd')
 objs[['Acropora.tenuis']] <- std_obj
 load('01.nt.seurat.info2.umap.rd')
 objs[['Nematostella.vectensis']] <- std_obj
@@ -551,6 +860,8 @@ ct_tree <- nj(dmat)
 pdf("07.cell_type_tree.pdf", width = 20, height = 36) 
 plot(ct_tree, main = "Phylogenetic Tree of Cell types")
 dev.off()
+
+
 #### debug
 avg <- AverageExpression(std_obj, group.by = "samap_family")
 

@@ -14,7 +14,37 @@ library(Matrix)
 # renv::install('devtools')
 # renv::install("C:\\Users\\kjia\\workspace\\library\\repository\\presto")
 # renv::install("C:\\Users\\kjia\\workspace\\library\\repository\\DoubletFinder")
-proc_foxgene <- function(std_obj, pref, suffix){
+
+# eye<-readRDS("eye.rds")
+seurat2mtx <- function(seurat_obj, pref, cluster_list){
+  writeMM(obj = seurat_obj[["RNA"]]$counts, file= paste0(pref, ".counts.mtx"))
+  write(x = rownames(seurat_obj[["RNA"]]$counts), file = paste0(pref, ".row.txt"))
+  write(x = colnames(seurat_obj[["RNA"]]$counts), file = paste0(pref, ".col.txt"))
+
+  # Save cluster information
+  mdata <- seurat_obj@meta.data
+  write.table(mdata[, cluster_list], file = paste0(pref, ".clusters.tsv"), sep = "\t", row.names = TRUE, quote = FALSE)
+  print(paste0('Export ', pref, '.mtx .row.txt .col.txt .clusters.tsv'))
+}
+
+
+mtx2seurat <- function(mtx_file, barcodes_file, genes_file, cluster_file, out_name) {
+  # counts <- ReadMtx(mtx_file, cells=barcodes_file, features=genes_file, feature.column = 1) # probably needs quote=""
+  mtx <- readMM(mtx_file)
+  colnames(mtx) <- readLines(barcodes_file)
+  rownames(mtx) <- readLines(genes_file)
+  std_obj <- CreateSeuratObject(counts = mtx)
+  std_obj <- std_seurat_ppl(std_obj)
+  clustering_data <- read.table(cluster_file, quote = "", header = TRUE, sep = "\t", row.names = 1)
+  for (col_name in colnames(clustering_data)) {
+    std_obj@meta.data[[col_name]] <- clustering_data[[col_name]][match(rownames(std_obj@meta.data), rownames(clustering_data))]
+  }
+  #save(std_obj, file=out_name)  
+  return(std_obj)
+}
+
+
+proc_foxgene <- function(std_obj, pref, gene_set, suffix){
 	# violin
 	expression_data <- FetchData(std_obj, vars = gene_set)
 	total_expression <- rowSums(expression_data)
@@ -537,6 +567,80 @@ ordered_tips_apenj<-function(tree){
 	return(tree$tip.label[tree$edge[is_tip, 2]])
 }
 
+#########################################
+# generate dotplot for a set of cluster labels
+cluster_dotplots <- function(obj, clabels, yn_map, xn_map, outprefix){
+  count=0
+  for(i in clabels){
+    print(i)
+    nc = sum(Idents(obj)==i)
+    if(nc<5){
+      message(glue("generate_cluster_dotplots_withmaps():: low cell number: {i}: {nc}"))
+      next
+    }
+    de.genes.df <- FindMarkers(obj, ident.1=i, only.pos = T)
+    cluster_markers_tibble <- as_tibble(rownames_to_column(de.genes.df, var = "gene"))
+
+    genes_for_dotplot <- cluster_markers_tibble %>%
+        filter(avg_log2FC > 0, p_val_adj < 0.05) %>% ## filter rows
+        dplyr::arrange(p_val_adj, desc(avg_log2FC)) %>% ## sort filter results first by p_val_adj ascending, then avg_log2FC decending
+        dplyr::slice_head(n = 150) %>%  ## select top 150 rows
+        pull(gene) ## get gene column value of previous result as a vector
+    
+     if(length(genes_for_dotplot) > 0){
+        gg <- Seurat::DotPlot(object = obj, features = rev(genes_for_dotplot), cols = "RdYlBu") + coord_flip() +
+          theme(axis.text.x = element_text(hjust = 1, angle = 75))
+
+        #print(length(yn_map))
+        #print(yn_map)
+         # alter y labels    
+        if(length(yn_map)!=0){    
+            gb<-ggplot_build(gg)
+            # alter gene(y) labels
+            ystr <- gb$layout$panel_params[[1]]$y$get_labels()
+            #ystr <- gsub("-","_",ystr)
+            ydf <-data.frame(geneID=ystr)
+            #y_names <- left_join(ydf, yn_map, by = "geneID") %>% distinct(geneID, .keep_all=T)
+            y_names<-merge(ydf, yn_map, by = "geneID", all.x = TRUE)
+            y_names$gene_alias[is.na(y_names$gene_alias)] <- y_names$geneID[is.na(y_names$gene_alias)]
+            
+            gg<-gg + scale_x_discrete(labels = y_names$gene_alias)
+        }  
+  
+         # alter x labels    
+        if(length(xn_map)!=0){        
+            # alter cluster(x) labels
+            xstr <- gb$layout$panel_params[[1]]$x$get_labels()
+            xdf <-data.frame(idx=xstr)
+            #x_names <- left_join(xdf, xn_map, by = "idx") %>% distinct(idx, .keep_all=T)
+            x_names<-merge(xdf, xn_map, by = "idx", all.x = TRUE)
+            x_names$gene_alias[is.na(x_names$gene_alias)] <- x_names$geneID[is.na(x_names$gene_alias)]            
+            gg<-gg + scale_y_discrete(labels=x_names$alias)
+        }   
+
+        #y_names$final_emapper_name
+        #gg<-gg + scale_x_discrete(labels = y_names$gene_alias) + scale_y_discrete(labels=x_names$alias) + ggtitle(sprintf("%s (%d)", i, sum(Idents(obj) == i)))
+        gg<-gg +  ggtitle(sprintf("%s (%d)", i, sum(Idents(obj) == i)))
+        outname <- paste0("output/", outprefix, "_c_", i, "_dotplot.pdf")
+        ggsave(filename = outname, 
+               plot = gg, 
+               path = ".",
+               width = 30, # 18
+               height = (length(genes_for_dotplot) * (1/6)) + 20, # +2
+               units = "in", 
+               limitsize = F)
+        count=count+1
+        message(glue("Save to {outname}."))
+    }
+  }
+  ncluster = length(clabels)
+  message(glue("{count} / {ncluster} dotplot saved."))
+}
+
+
+
+#########################################
+
 
 
 # yn_map: gene alias
@@ -806,7 +910,7 @@ return(d)
 # FindVariableFeatures: apply on normalized data. calculate the difference between expected variance and observed variance. expected variance is calculated using regression between mean expression and mean variance of each gene.
 # ScaleData: transform normalized data into z scores; has negative values
 
-std_seurat_ppl <- function(obj, clustering=TRUE, umap=FALSE){
+std_seurat_ppl <- function(obj, clustering=FALSE, umap=FALSE){
 	obj <- NormalizeData(obj , normalization.method = "LogNormalize", scale.factor = 10000) %>%
 	FindVariableFeatures(selection.method = "vst", nfeatures = 3000) %>%
 	ScaleData(verbose = F, vars.to.regress = "nCount_RNA") %>%

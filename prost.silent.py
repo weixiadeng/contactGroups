@@ -332,6 +332,52 @@ makedb command gets a fasta file and creates a PROST database that can be used a
                 dump(cache,f)
 
 def _search_worker(thr, gothr, qnames,qdb,tnames,tdb, go,goFrq,goDesc, mem, taskInd, n):
+    #print('in worker')
+    lqdb = len(qdb)
+    ldb = len(tdb)
+    start = int(lqdb/n*taskInd)
+    stop = int(lqdb/n*(taskInd+1))
+    if stop > lqdb: stop = lqdb
+    #print(taskInd,n,start,stop)
+    homologList, goList = {},{}
+    #for i,q in enumerate(qdb[start:stop]):
+    for i,q in tqdm(enumerate(qdb[start:stop])):    
+        #qname = parseName(qnames[i+start])[0]
+        qname = qnames[i+start]
+        goList[qname] = []
+        homologList[qname] = []
+        #print(f'[{taskInd:02d}] Searching for {qname}')
+        np.subtract(tdb,q,out=mem)
+        np.absolute(mem,out=mem)
+        dbdiff = mem.sum(axis=1)
+        m=np.median(dbdiff)
+        s=st.median_abs_deviation(dbdiff)*1.4826
+        zscore = (dbdiff-m)/s
+        e = st.norm.cdf(zscore)*ldb
+        res = np.where(e < thr)[0]
+        sort = np.argsort(e[res])
+        res = res[sort]
+        dbdiff = dbdiff[res]/2
+        evals = e[res]
+        names = tnames[res]
+
+        if go is not None:
+            res2 = np.where(e < gothr)[0]
+            sort2 = np.argsort(e[res2])
+            res2 = res2[sort2]
+            for a in annotate(res2,e[res2],go,goFrq,goDesc):
+                #goList[qname].append([a[0], a[1], f'{a[2]:.3f}', parseName(tnames[a[3]])[0], a[5], f'{a[4]:.2e}'])
+                goList[qname].append([a[0], a[1], f'{a[2]:.3f}', tnames[a[3]], a[5], f'{a[4]:.2e}'])
+
+        for n,diff,ev in zip(names,dbdiff,evals):
+            #n = parseName(n)
+            #homologList[qname].append([n[0], n[1], n[2], n[3], diff, f'{ev:.2e}'])
+            #homologList[qname].append([n, '_na_', '_na_', '_na_', '_na_', '_na_', '_na_', '_na_', '_na_', f'{ev:.2e}', diff])
+            homologList[qname].append([n, diff, f'{ev:.2e}'])
+    return goList,homologList
+
+def _search_worker_sp(thr, gothr, qnames,qdb,tnames,tdb, go,goFrq,goDesc, mem, taskInd, n):
+    #print('in worker_sp')
     lqdb = len(qdb)
     ldb = len(tdb)
     start = int(lqdb/n*taskInd)
@@ -370,7 +416,7 @@ def _search_worker(thr, gothr, qnames,qdb,tnames,tdb, go,goFrq,goDesc, mem, task
             n = parseName(n)
             homologList[qname].append([n[0], n[1], n[2], n[3], diff, f'{ev:.2e}'])
     return goList,homologList
-def _search(thr, gothr, querydb, targetdb, godb,n):
+def _search(thr, gothr, querydb, targetdb, godb,n, flag):
     if godb != None:
         with open(godb,'rb') as f:
             go,goFrq,goDesc = load(f)
@@ -385,9 +431,15 @@ def _search(thr, gothr, querydb, targetdb, godb,n):
     with Pool(n) as pool:
         if godb != None: items = [(thr, gothr, qnames,qdb,tnames,tdb, go,goFrq,goDesc, mem[i], i, n) for i in range(n)]
         else: items = [(thr, gothr, qnames,qdb,tnames,tdb, None,None,None, mem[i], i, n) for i in range(n)]
-        for result in pool.starmap(_search_worker, items):
-            homologList.update(result[1])
-            goList.update(result[0])
+        if flag == 'sp':
+            for result in pool.starmap(_search_worker_sp, items):
+                homologList.update(result[1])
+                goList.update(result[0])
+        else:
+            for result in pool.starmap(_search_worker, items):
+                homologList.update(result[1])
+                goList.update(result[0])
+
     return goList,homologList
 
 def toTSV(goList,homologList,out):
@@ -495,36 +547,38 @@ PROST [python package](https://github.com/MesihK/prost) can be used to generate 
     return cnt
 
 @click.command()
+@click.option('--flag', default='def', help='set to sp for parsing uniprot name')
 @click.option('--thr', default=0.05, help='E-value threshold for homolog detection')
 @click.option('-n', '--jobs', default=1, help='Number of jobs to run in parallel')
 @click.argument('querydb', type=click.Path(exists=True,file_okay=True,dir_okay=False))
 @click.argument('targetdb', type=click.Path(exists=True,file_okay=True,dir_okay=False))
 @click.argument('out', type=click.Path(exists=False,file_okay=True,dir_okay=False))
-def search(thr, jobs, querydb, targetdb, out):
+def search(thr, jobs, querydb, targetdb, out, flag):
     '''Search a query database in target database.
 This command searches a query database against a target database.
 Both databases should be created using makedb command.
 Databases can contain one or more sequences.
 An e-value threshold can be specified with --thr flag. The default e-value threshold is 0.05'''
-    goList,homologList = _search(thr,None,querydb,targetdb,None,jobs)
+    goList,homologList = _search(thr,None,querydb,targetdb,None,jobs,flag)
     print(f'Saving results into {out}.tsv.')
     toTSV(goList,homologList,out)
     print(f'You can use `prost tojsonwp` command to convert {out}.tsv results into a webpage!')
 
 @click.command()
+@click.option('--flag', default='sp', help='E-value threshold for homolog detection')
 @click.option('--thr', default=0.05, help='E-value threshold for homolog detection')
 @click.option('--gothr', default=0.05, help='E-value threshold for GO annotation')
 @click.option('-n', '--jobs', default=1, help='Number of jobs to run in parallel')
 @click.argument('querydb', type=click.Path(exists=True,file_okay=True,dir_okay=False))
 @click.argument('out', default='PROST.res', type=click.Path(exists=False,file_okay=True,dir_okay=False))
-def searchsp(thr,gothr,jobs, querydb, out):
+def searchsp(thr,gothr,jobs, querydb, out, flag):
     '''Search query database in SwissProt February 2023 database.
 This command searches a query database against a SwissProt February 2023 database.
 Query database should be created using makedb command.
 It can contain one or more sequences.
 An e-value threshold can be specified with --thr flag. The default e-value threshold is 0.05.
 An seperate GO annotation threshold can be specified with --gothr flag. The default is 0.05.'''
-    goList,homologList = _search(thr,gothr,querydb,prostdir+'/sp.02.23.parsed.prdb',prostdir+'/sp.02.23.go.pkl',jobs)
+    goList,homologList = _search(thr,gothr,querydb,prostdir+'/sp.02.23.parsed.prdb',prostdir+'/sp.02.23.go.pkl',jobs, flag)
     print(f'Saving results into {out}.tsv.')
     toTSV(goList,homologList,out)
     print(f'You can use `prost tojsonwp` command to convert {out}.tsv results into a webpage!')

@@ -2198,7 +2198,7 @@ def main():
 		'getcolumns': getcolumns, # get columns from MSA
 		'getsinglemsa': getsinglemsa, # get single MSA gapped / ungapped fa with sequence name or null
 		'getsinglemsa_r': getsinglemsa_r, # get single rna MSA 
-		'getbatchmsa': getbatchmsa,
+		'getbatchmsa': getbatchmsa, # utils_pfammsa.py getbatchmsa PF00000.txt header.list name_prefix outfile
 		'getbatchseq_with_pref': getbatchseq_with_pref, # extract batch seq from input list and append pref to headers
 		'getsinglemsacluster': getsinglemsacluster, 
 		'msa2rawseq': msa2rawseq, # convert aligned MSA to fasta raw sequences
@@ -2209,11 +2209,11 @@ def main():
 		'msareduce_byseq': msareduce_byseq,
 		'pairsubstitution': pairsubstitution,
 		'psicovaln': psicovaln,
-		'rename_seq': rename_seq, # rename sequence title according to a name mapping file
-		'rename_seq_prefix': rename_seq_prefix, # rename all sequence title by appending a prefix
+		'rename_seq': rename_seq, # rename sequence title according to a name mapping file {"\t"}
+		'rename_seq_prefix': rename_seq_prefix, # rename all sequence title by appending a prefix and a delimiter
 		'retitle': retitle, # format header for dca calculation
 		'retitlebyfield': retitlebyfield,
-		'remove_duplicate': remove_duplicate,
+		'remove_duplicate': remove_duplicate, # remove duplicate header+seq records # python utils_pfammsa.py remove_duplicate infile.fasta outfile
 		'samplebyhamming': samplebyhamming,
 		'sampleu': sampleu, # sample sequences uniformly
 		'seqreduce': seqreduce, # map seq to integer without filtering

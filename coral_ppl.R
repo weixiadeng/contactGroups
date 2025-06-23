@@ -16,6 +16,39 @@ library(Matrix)
 # renv::install("C:\\Users\\kjia\\workspace\\library\\repository\\DoubletFinder")
 
 # eye<-readRDS("eye.rds")
+
+
+str_norm <- function(s) {
+  s <- gsub("-", "_", s)
+  s <- gsub(":", "", s)
+  s <- gsub("\\?", "", s)
+  return(s)
+}
+
+####
+# output marker from multiple seurat objects genes as vec1 tsv
+# objs: named list: 'species': 'seurat_obj'
+# clusters: named list: 'species': c('c1','c2',...)
+# top_n: integer
+top_markers <- function(objs, clusters, top_n){
+  top_markers_list <- list()
+  for (sn in names(clusters)) {
+    species_clusters <- clusters[[sn]]
+    
+    for (c in species_clusters) {
+      print(paste0('calculating marker genes for ', sn, ':', c))
+      markers <- FindMarkers(objs[[sn]], ident.1 = c)
+      top_g <- markers %>% arrange(desc(avg_log2FC)) %>% head(top_n) %>% rownames()
+      
+      # append species name
+      list_name <- paste(sn, c, sep = "_")
+      top_markers_list[[list_name]] <- paste(sn, top_g, sep="_")
+    }
+  }
+  return(stack(top_markers_list)) # dataframe:{genes, clusters}
+}
+
+
 seurat2mtx <- function(seurat_obj, pref, cluster_list){
   writeMM(obj = seurat_obj[["RNA"]]$counts, file= paste0(pref, ".counts.mtx"))
   write(x = rownames(seurat_obj[["RNA"]]$counts), file = paste0(pref, ".row.txt"))
@@ -657,7 +690,8 @@ generate_cluster_dotplots_withmaps <- function(obj, yn_map, xn_map, x_ordered, g
 	# for(i in levels(obj)){
 	#print(x_ordered)
 	# temp exclude
-	#ss=c('g12','g15','g16','g17','g19','g21','g22','g24','g25','g29','g31','g34','g37','g38','g44','g45','g46','g5','g59','g61','g63','g66','g8','g9')
+	#ss=c("all.gastrodermis.MR/PM","all.gastrodermis.gastrodermis","all.gastrodermis.pharyngeal","all.gastrodermis.ImM","all.gastrodermis.non-muscle","all.gastrodermis.mesentery","all.gastrodermis.neuron"      ,"all.gastrodermis.immune"  ,"all.gastrodermis.gland"   ,"all.gastrodermis.ciliated" ,"all.ectoderm.apical organ","all.ectoderm.early.ect.1" ,"all.ectoderm.early.ect.2" ,"all.ectoderm.early.ect.2b" ,"all.ectoderm.lip","all.ectoderm.pharyng."    ,"all.ectoderm.epith.1"     ,"all.ectoderm.epith.2"      ,"all.ectoderm.epith.3","all.ectoderm.epith.4"     ,"pSC.PGC.Mitotic.1"        ,"pSC.PGC.Mitotic.2"         ,"pSC.PGC.NPC","pSC.PGC.NPC.g"            ,"pSC.PGC.PGC"              ,"pSC.PGC.primary.oocyte"    ,"pSC.PGC.spermatagonia","pSC.PGC.maturing.sperm"   ,"pSC.PGC.maturing.sperm.2" )
+	#for(i in ss){
 	for(i in x_ordered){
 		print(i)
 		#s=substring(i,1,nchar(i)-4)
@@ -681,16 +715,25 @@ generate_cluster_dotplots_withmaps <- function(obj, yn_map, xn_map, x_ordered, g
 			pull(gene) ## get gene column value of previous result as a vector
 		
 		
+		print(paste0("# of marker genes in ", i, ": ", length(genes_for_dotplot)))
 		if(length(genes_for_dotplot) > 0){
 			gg <- Seurat::DotPlot(object = obj, features = rev(genes_for_dotplot), cols = "RdYlBu") + coord_flip() +
 			theme(axis.text.x = element_text(hjust = 1, angle = 75))
+
+			#gg <- Seurat::DotPlot(object = obj, features = rev(genes_for_dotplot), cols = "RdYlBu") + 
+			#  theme(axis.text.x = element_text(hjust = 1, angle = 75))
 			
 			gb<-ggplot_build(gg)
 			# alter gene(y) labels
 			ystr <- gb$layout$panel_params[[1]]$y$get_labels()
 			ystr <- gsub("-","_",ystr)
 			ydf <-data.frame(geneID=ystr)
-			y_names <- left_join(ydf, yn_map, by = "geneID") %>% distinct(geneID, .keep_all=T)
+			#y_names <- left_join(ydf, yn_map, by = "geneID") %>% distinct(geneID, .keep_all=T)
+			
+			y_names <- left_join(ydf, yn_map, by = "geneID") %>%
+			  mutate(geneID = coalesce(gene_alias, geneID)) %>%
+			  dplyr::select(-gene_alias) 
+			# %>% distinct(geneID, .keep_all=T)
 			
 			# alter cluster(x) labels
 			xstr <- gb$layout$panel_params[[1]]$x$get_labels()
@@ -698,9 +741,9 @@ generate_cluster_dotplots_withmaps <- function(obj, yn_map, xn_map, x_ordered, g
 			x_names <- left_join(xdf, xn_map, by = "idx") %>% distinct(idx, .keep_all=T)
 			
 			#y_names$final_emapper_name
-			gg<-gg + scale_x_discrete(labels = y_names$gene_alias) + scale_y_discrete(labels=x_names$alias) + ggtitle(sprintf("%s (%d)", i, sum(Idents(obj) == i)))
+			gg<-gg + scale_x_discrete(labels = y_names$geneID) + scale_y_discrete(labels=x_names$alias) + ggtitle(sprintf("%s (%d)", i, sum(Idents(obj) == i)))
 			
-			outname <- paste0("output/", outprefix, "_c_", i, "_dotplot.pdf")
+			outname <- paste0("output/", outprefix, "_c_", gsub("/", "_", i), "_dotplot.pdf")
 			
 			ggsave(filename = outname,
 				plot = gg, 
@@ -715,7 +758,7 @@ generate_cluster_dotplots_withmaps <- function(obj, yn_map, xn_map, x_ordered, g
 			# go enrichment analysis
 			if(is.null(goseq_params$gene.lengths)){
 				message(glue("generate_cluster_dotplots_withmaps()::goseq_pararms$gene.lengths is NULL"))
-				return(FALSE)
+				next
 			}
 			# generate gene.vector
 			all.genes <- names(goseq_params$gene.length)
@@ -726,7 +769,7 @@ generate_cluster_dotplots_withmaps <- function(obj, yn_map, xn_map, x_ordered, g
 			# run goseq go enrichment analysis
 			go_plot <- go_enrichment(goseq_params)	
 			# save plot
-			outname <- paste0("output/", outprefix, "_c_", i, "_goseq.pdf")
+			outname <- paste0("output/", outprefix, "_c_", gsub("/", "_", i), "_goseq.pdf")
 			ggsave(filename = outname,
 				plot = go_plot, 
 				path = ".",

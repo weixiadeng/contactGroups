@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import scipy as sp
 import difflib
+import math
 from itertools import groupby, combinations
 from scipy.spatial import distance
 from collections import OrderedDict, defaultdict
@@ -30,6 +31,34 @@ _cscheme_seurat_dimplot=['#f8766d', '#7cae00', '#00bfc4', '#c77cff', '#e68613', 
 ############################################################################################
 # fucntions for orthofinder --------------------------------------------------
 ############################################################################################
+# new logic to find one-to-one orthologs from orthofinder results
+# Orthogroups/Orthogroups_SingleCopyOrthologues.txt: one-to-one orthologues refer to Phylogenetic_Hierarchical_Orthogroups/*.tsv
+#
+# just find groups with each species has just one gene within Phylogenetic_Hierarchical_Orthogroups/*.tsv
+# kjia@DESKTOP-L0MMU09 ~/workspace/foxd/orthofinder/no_hydra/Phylogenetic_Hierarchical_Orthogroups 2025-06-16 14:29:55
+# $ cat *.tsv > all.tsv
+def ortho_1to1_s5(args):
+    assert len(args) == 2, 'Usage: python proc_coral_samap.py 1to1_ortho all.tsv out.tsv'
+    infile =args[0]
+    outfile = args[1]
+    out = []
+    # Phylogenetic_Hierarchical_Orthogroups/*.tsv
+    # 0       1       2                       3       4       5       6       7
+    # HOG     OG      Gene Tree Parent Clade  ad      at      nt      sp      xe
+    for t in cp.loadtuples(infile, delimiter='\t'):
+        if(len(t) != 8): continue # loadtuples uses rstrip() so some lines will not have 8 columns
+        # one gene for each species, ',' separated genes otherwise
+        # inside prod make sure no empty strings are included; # outside prod make sure one gene per species
+        if(1==math.prod([(',' not in b and b!='') for b in t[3:]])):
+            out.append('\t'.join(t))
+    out.sort() # for manual checking
+    with open(outfile, 'w') as fout:
+        fout.write('%s\n' % '\n'.join(out))
+    cp._info('save one-to-one orthologs {ad at nt sp xe} to %s' % outfile)
+        
+
+
+# old procedure
 # ortho one-to-one
 # extract one-to-one orthologs from orthofinder outputs
 # kjia@DESKTOP-K0I3VAM ~/workspace/foxd/orthofinder/Orthologues_ad 2024-12-15 18:31:00
@@ -317,7 +346,7 @@ def ann_merge_alias(args):
     emapper_dict = emapper_df.set_index('geneID')['final_emapper_name'].to_dict()
 
     prost_df = pd.read_csv(prost_file, sep='\t')
-    prost_dict = prost_df.set_index('geneID')['geneID_alias'].to_dict()
+    prost_dict = prost_df.set_index('geneID')['prost_alias'].to_dict()
 
     out_dict = {}
     # make sure all keys are "_" seperated as "adig_s0001.g1"

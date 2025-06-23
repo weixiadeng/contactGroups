@@ -73,6 +73,20 @@ def _calc_distance_matrix(s, cluster_name, fn_cluster_vector=_mean_expression, m
     distance_matrix = squareform(pdist(vectors, metric))
     return pd.DataFrame(distance_matrix, index=labels, columns=labels)
 
+# average expression from integrated wpca
+def _ave_expression_wpca(sams, wpca, cname):
+    ave_expr = []
+    n_start = 0
+    for k in sams.keys(): # python 3.7+, .keys() returns keys by insert order
+        n = len(sams[k].adata.obs)
+        sams[k].adata.obs['n_idx'] = range(n) # make integer index
+        #s = sams[k].adata.obs.groupby(cname).apply(lambda x: x.index.tolist()).to_dict() # split cells by cname label: s['cluster_label'] = [cell indices]
+        s = sams[k].adata.obs.groupby(cname, observed=False)['n_idx'].apply(list).to_dict() # split cells by cname label: s['cluster_label'] = [cell indices]
+        ave_expr.extend([['%s_%s' % (k, label), wpca[np.array(s[label])+n_start,:].mean(axis=0)] for label in s]) # tuple(species_label, average_expression_vector)
+        n_start += n # add up previous cell number
+    return np.array(ave_expr, dtype=object)
+
+
 
 # discarded, using R::ape::nj instead
 # s: sam object
@@ -296,6 +310,7 @@ def _generate_sam(h5file, leiden_res=3, outfile=None):
     if outfile is not None: 
         sam.save_anndata(outfile)
         cp._info('save sam h4ad to %s' % outfile)
+
 
 
 # procedures ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

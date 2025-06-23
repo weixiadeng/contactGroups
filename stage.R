@@ -1,21 +1,23 @@
 ####################################################
 # pin cg_ver
+library(Seurat)
 library(Matrix)
 library(tidyr)
 library(tibble)
 library(ggplot2)
 library(tidyverse)
-library(Seurat)
 library(pheatmap)
 library(ape)
 library(reticulate)
-library(DoubletFinder)
 library(glue)
 library(readr)
 library(doParallel)
-library(WGCNA)
 library(gridExtra)
 library(ROCR)
+library(dplyr)
+
+library(WGCNA)
+library(DoubletFinder)
 library(GO.db)
 library(goseq)
 #library(conflicted)
@@ -26,6 +28,7 @@ setwd('C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw')
 
 rm(list=ls())
 source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\00.objs.at_ad_nt_sp_xe_hy.rds')
 
 #load('ad3456.clean.sym_split.rd')
 load('ad3456.clean.sym_split.filtered.rd') # after remove small clusters
@@ -36,11 +39,523 @@ obj <- ad3456.clean
 # 06.ad2all.sym_split.summary.vec2.tsv # alias for heatmap
 # 06.ad2all.sym_split.summary.r.vec2.tsv # alias for dotplot
 
-#####################################################
-
-setwd('C:\\Users\\kjia\\workspace\\foxd\\stage')
+###################################################
+# coral figures
 rm(list=ls())
-source('coral_ppl.R')
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+# objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\01.objs.at_ad_nt_sp_xe_hy.umap.rds')
+objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\02.objs.at_ad_nnt_sp_xe_hy.umap.rds')
+
+setwd('C:\\Users\\kjia\\workspace\\coral\\figures')
+
+## UMAP of ad at color cells by cell type family
+
+fp <- DimPlot(objs[['ad']], reduction = "umap", group.by = "cell_type", label = TRUE) + ggtitle("Acropora digitifera UMAP by Cell Type")
+ggsave("umap.ad.cell_type.pdf", plot = fp, width = 32, height = 12)
+
+fp <- DimPlot(objs[['at']], reduction = "umap", group.by = "cell_type", label = TRUE) + ggtitle("Acropora tenuis UMAP by Cell Type")
+ggsave("umap.at.cell_type.pdf", plot = fp, width = 28, height = 12)
+
+
+## feature plot colored by sample ID
+# pt.size = 1, 
+fp <- DimPlot(objs[['ad']], reduction = "umap", group.by = "orig.ident",label = FALSE) + ggtitle("Acropora digitifera UMAP by Sample ID")
+ggsave("umap.ad.sample_ID.pdf", plot = fp, width = 14, height = 12)
+
+fp <- DimPlot(objs[['at']], reduction = "umap", group.by = "orig.ident", label = FALSE) + ggtitle("Acropora tenuis UMAP by Sample ID")
+ggsave("umap.at.sample_ID.pdf", plot = fp, width = 14, height = 12)
+
+
+## Violin plot by cell type
+fp <- VlnPlot(objs[['ad']], features = "nCount_RNA", group.by = "cell_type", pt.size = 0.1) +   ggtitle("Acropora digitifera UMI Counts by Cell Type")
+ggsave("vlnplot.ad.UMI.cell_type.pdf", plot = fp, width = 48, height = 12)
+
+fp <- VlnPlot(objs[['at']], features = "nCount_RNA", group.by = "cell_type", pt.size = 0.1) +   ggtitle("Acropora tenuis UMI Counts by Cell Type")
+ggsave("vlnplot.at.UMI.cell_type.pdf", plot = fp, width = 48, height = 12)
+
+
+# ad at samap heatmap
+setwd('C:\\Users\\kjia\\workspace\\coral\\samap')
+library(pheatmap)
+infile="03.adat.alignment_scores.cell_type.slim.tsv"
+
+mat <- t(read.table(infile, row.names=1, header=TRUE, sep='\t'))
+
+pdf("heatmap.adat.samap.cell_type.pdf", width = 16, height = 12)
+pheatmap(seriation_mat(mat),cluster_rows=F, cluster_cols=F)
+dev.off()
+
+###################################################
+# cell type marker gene dotplot 20250620
+
+rm(list=ls())
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+
+objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\02.objs.at_ad_nnt_sp_xe_hy.umap.rds')
+setwd("C:\\Users\\kjia\\workspace\\coral\\stage.dotplot.others")
+
+pref <- 'sp'
+pref <- 'xe'
+pref <- 'nt'
+obj <- objs[[pref]]
+
+# generating cell type tree
+avg_expr <- AverageExpression(obj, assays = "RNA", layer="data", group.by = 'cell_type')
+tree <- nj(dist(t(avg_expr$RNA)))
+plot(tree)
+ordered_clusters <- gsub("-","_", ordered_tips_apenj(tree))
+#ordered_clusters <- read.table(file = "ad.merged_clusters_tree_order.tsv", sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+write.table(ordered_clusters , file = paste0(pref, ".clusters_tree_order.tsv"), sep = "\t", col.names=FALSE, row.names = FALSE, quote = FALSE)
+
+Idents(obj) <- obj$cell_type
+levels(Idents(obj)) <- factor(ordered_clusters)
+
+yn_map <- read.csv(paste0(pref,".gene_alias.tsv"), header = TRUE, sep = "\t")
+#xn_map <- read.csv("06.ad2all.merged_clusters.summary.nj.vec2.tsv", header = TRUE, sep = "\t")
+df_xn_map <- data.frame(idx = ordered_clusters, alias = ordered_clusters, stringsAsFactors = FALSE)
+goseq_params <- NULL
+generate_cluster_dotplots_withmaps(obj, yn_map, df_xn_map, ordered_clusters, goseq_params, pref)
+
+# just for nt
+yn_map <- data.frame(geneID = rownames(obj), gene_alias = rownames(obj), stringsAsFactors = FALSE)
+
+
+# order clusters (discard)
+ordered_clusters <- sort(unique(obj$cell_type))
+Idents(obj) <- obj$cell_type
+levels(Idents(obj)) <- factor(ordered_clusters)
+
+
+#########################################################
+## coral transcript factor dotplot tf dotplot 20250620
+
+setwd("C:\\Users\\kjia\\workspace\\coral")
+tf <- read.csv("ad.tf.list.tsv", header = FALSE, sep = "\t")
+
+pref <- 'ad'
+pref <- 'at'
+
+obj <- objs[[pref]]
+
+total_de <- c()
+for(i in unique(obj$cell_type)){
+  de.genes.df <- FindMarkers(obj, ident.1=i, only.pos = T)
+  #cluster_markers_tibble <- as_tibble(rownames_to_column(FindMarkers(obj, ident.1=i, only.pos = T), var = "gene"))
+  cluster_markers_tibble <- as_tibble(rownames_to_column(de.genes.df, var = "gene"))
+  
+  de_genes <- cluster_markers_tibble %>%
+    filter(avg_log2FC > 0, p_val_adj < 0.01) %>% ## filter rows
+    dplyr::arrange(p_val_adj, desc(avg_log2FC)) %>% ## sort filter results first by p_val_adj ascending, then avg_log2FC decending
+    #dplyr::slice_head(n = 150) %>%  ## select top 150 rows
+    pull(gene) 
+  
+  total_de <- c(unlist(total_de), unlist(de_genes))
+  print(paste0(i, ":", length(total_de)))
+}
+total_de <- unique(total_de)
+print(total_de)
+
+common <- intersect(unlist(total_de), unlist(gsub("_","-", tf$V1)))
+
+# save marker tf
+write.table(common, file = paste0(pref, ".marker_tf.tsv"), sep = "\t", col.names=FALSE, row.names = FALSE, quote = FALSE)
+
+
+
+
+
+## tf dotplot
+
+ordered_clusters <- read.table(file = paste0(pref, ".clusters_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+Idents(obj) <- obj$cell_type
+levels(Idents(obj)) <- factor(ordered_clusters)
+
+yn_map <- read.csv(paste0(pref,".gene_alias.tsv"), header = TRUE, sep = "\t")
+df_xn_map <- data.frame(idx = ordered_clusters, alias = ordered_clusters, stringsAsFactors = FALSE)
+
+for(i in ordered_clusters){
+  gg <- Seurat::DotPlot(seurat_obj, features = genes_present, cols = "RdYlBu", group.by = "cell_type") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ggtitle("Transcript factor DotPlot by Cell Type")
+  
+  gb<-ggplot_build(gg)
+  # alter gene(y) labels
+  ystr <- gb$layout$panel_params[[1]]$y$get_labels()
+  ystr <- gsub("-","_",ystr)
+  ydf <-data.frame(geneID=ystr)
+
+  y_names <- left_join(ydf, yn_map, by = "geneID") %>%
+    mutate(geneID = coalesce(gene_alias, geneID)) %>%
+    dplyr::select(-gene_alias) 
+
+  # alter cluster(x) labels
+  xstr <- gb$layout$panel_params[[1]]$x$get_labels()
+  xdf <-data.frame(idx=xstr)
+  x_names <- left_join(xdf, xn_map, by = "idx") %>% distinct(idx, .keep_all=T)
+  
+  #y_names$final_emapper_name
+  gg<-gg + scale_x_discrete(labels = y_names$geneID) + scale_y_discrete(labels=x_names$alias) + ggtitle(sprintf("%s (%d)", i, sum(Idents(obj) == i)))
+  
+  outname <- paste0(pref, "_c_", gsub("/", "_", i), "_tf_dotplot.pdf")
+  
+  ggsave(filename = outname,
+         plot = gg, 
+         path = ".",
+         width = 30, # 18
+         height = (length(genes_for_dotplot) * (1/6)) + 20, # +2
+         units = "in", 
+         limitsize = F)
+  count=count+1
+  message(glue("Save to {outname}."))
+}
+
+###################################################
+# Jake's emapper annotation ppl 20250619
+# kjia@DESKTOP-L0MMU09 ~/workspace/coral/emapper.annotations 2025-06-19 15:12:52
+
+# input files:
+# 
+## emapper output: out.emapper.orthologs
+## need to change column name: #query to query
+# adig.pep_shortname_longestprotein.emapper.orthologs
+
+## vec2 {proteinID       geneID} = {adig_s0001.g1.t2        adig_s0001.g1}
+# adig.proteinID_to_geneID_lookup.tsv
+
+## vecw {transcriptID    geneID} = {adig_s0001.g1.t2        adig_s0001.g1}
+# adig.transcriptID_to_geneID_lookup.tsv
+
+## make pseudo table for sp,xe,nt
+# /emapper.annotations/emapper.sp 2025-06-19 15:42:15
+# $ grep ">" queries.fasta |awk 'BEGIN {print "transcriptID\tgeneID"} {printf "%s\t%s\n", substr($1,2) , substr($1,2)}' > lookup_transID2geneID.tsv
+# $ grep ">" queries.fasta |awk 'BEGIN {print "proteinID\tgeneID"} {printf "%s\t%s\n", substr($1,2) , substr($1,2)}' > lookup_protID2geneID.tsv
+
+## fly gene names vec11 col4: gene_symbol
+# fbgn_fbtr_fbpp_expanded_fb_2022_01.tsv
+
+## human gene names vec3 {geneID gene_symbol proteinID} = {ENSG00000275323 RPS9    ENSP00000480135}
+# human_proteinIDS_geneNAMES.txt
+
+## vec2 {goID go_annotation}
+# goterms_lookup.txt
+
+# output: adig_emapper_names_table_final.tsv
+
+setwd("C:\\Users\\kjia\\workspace\\coral\\emapper.annotations")
+
+# load gene names
+human_genes <- read_tsv("human_proteinIDS_geneNAMES.txt", show_col_types = F)
+fly_genes <- read_tsv("fbgn_fbtr_fbpp_expanded_fb_2022_01.tsv", show_col_types = F, skip = 4)
+fly_genes <- fly_genes %>% dplyr::select(polypeptide_ID, gene_ID, gene_symbol, gene_fullname)
+# optional
+goterms_table <- read_tsv("goterms_lookup.txt", col_names = c("go_id", "term"))
+
+
+pref <- "emapper.sp"
+pref <- "emapper.xe"
+emapper_orthotable <- read_tsv(paste0(pref, "/", "out.emapper.orthologs"), skip = 4)
+emapper_orthotable$orthologs <- gsub("\\*","", emapper_orthotable$orthologs)
+
+protein2gene_lookup <- read_tsv(paste0(pref, "/", "lookup_protID2geneID.tsv"))
+transcript2gene_lookup<- read_tsv(paste0(pref, "/", "lookup_transID2geneID.tsv"))
+
+
+# get human hits
+human_orthos <- emapper_orthotable %>%
+  filter(species == "Homo sapiens(9606)") %>%
+  separate_rows(orthologs, sep = ",") %>%
+  left_join(human_genes, by = c("orthologs" = "Protein_stable_ID"))
+
+# aptch NA gene_name from orthologs column
+human_orthos$Gene_name[is.na(human_orthos$Gene_name)] <- human_orthos$orthologs[is.na(human_orthos$Gene_name)]
+
+human_orthos <- human_orthos %>%
+  group_by(query) %>%
+  mutate(human_ortholog_symbols = paste(Gene_name, collapse = ","), human_proteinIDs = paste(orthologs, collapse = ","), human_geneIDs = paste(Gene_stable_ID, collapse = ",")) %>%
+  dplyr::rename(proteinID = query, human_orth_type = orth_type) %>%
+  left_join(protein2gene_lookup) %>%
+  ungroup() %>%
+  dplyr::select(proteinID, geneID, human_orth_type, human_proteinIDs, human_geneIDs, human_ortholog_symbols) %>%
+  unique()
+
+
+# get dm hits
+dm_orthos <- emapper_orthotable %>%
+  filter(species == "Drosophila melanogaster(7227)") %>%
+  separate_rows(orthologs, sep = ",") %>%
+  left_join(fly_genes, by = c("orthologs" = "polypeptide_ID")) 
+
+dm_orthos$Gene_name[is.na(dm_orthos$gene_symbol)] <- dm_orthos$polypeptide_ID[is.na(dm_orthos$gene_symbol)]
+
+dm_orthos <- dm_orthos %>%
+  group_by(query) %>%
+  mutate(fly_ortholog_symbols = paste(gene_symbol, collapse = ","), 
+         fly_ortholog_names = paste(gene_fullname, collapse = ","), 
+         fly_proteinIDs = paste(orthologs, collapse = ","), 
+         fly_geneIDs = paste(gene_ID, collapse = ",")) %>%
+  dplyr::rename(proteinID = query, fly_orth_type = orth_type) %>%
+  left_join(protein2gene_lookup) %>%
+  ungroup() %>%
+  dplyr::select(proteinID, geneID, fly_orth_type, fly_proteinIDs, fly_geneIDs, fly_ortholog_symbols, fly_ortholog_names) %>%
+  unique()
+
+
+
+final_names <- tibble(geneID = unique(transcript2gene_lookup$geneID)) %>%
+  left_join(human_orthos) %>%
+  left_join(dm_orthos)
+
+final_names <- final_names %>% add_column(final_emapper_name = final_names$geneID)
+
+
+final_names$final_emapper_name[!is.na(final_names$fly_ortholog_symbols)] <- paste0(final_names$geneID[!is.na(final_names$fly_ortholog_symbols)],
+                                                                                   " ",
+                                                                                   final_names$fly_orth_type[!is.na(final_names$fly_ortholog_symbols)],
+                                                                                   " dm-",
+                                                                                   final_names$fly_ortholog_symbols[!is.na(final_names$fly_ortholog_symbols)])
+
+final_names$final_emapper_name[!is.na(final_names$human_ortholog_symbols)] <- paste0(final_names$geneID[!is.na(final_names$human_ortholog_symbols)],
+                                                                                     " ",
+                                                                                     final_names$human_orth_type[!is.na(final_names$human_ortholog_symbols)],
+                                                                                     " hs-",
+                                                                                     final_names$human_ortholog_symbols[!is.na(final_names$human_ortholog_symbols)])
+
+
+final_names$final_emapper_name <- gsub("_","-", final_names$final_emapper_name)
+
+write_tsv(final_names, file = paste0(pref,"_table_final.tsv"))
+
+
+
+###################################################
+# cell type tree one-to-one orthologs 20250617
+# output.klog2: - cell type tree one-to-one orthologs jas method 
+
+
+rm(list=ls())
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+setwd('C:\\Users\\kjia\\workspace\\coral\\cell_type_tree\\one-to-one_orthologs')
+
+# load one-to-one orthologs
+df_genes_1to1 <- read.delim('02.1to1_ortho_sname.tsv', header = TRUE, sep = "\t")
+
+# remove 'hy'
+objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\02.objs.at_ad_nnt_sp_xe_hy.umap.rds')
+objs[['hy']] <- NULL # remove hy in this analysis
+
+# update nt object for renaming genes
+new_nt <- CreateSeuratObject(counts = objs[['nt']]@assays$RNA@counts, meta.data = objs[['nt']]@meta.data)
+new_nt <- std_seurat_ppl(new_nt, umap=TRUE)
+
+#tobj <- new_nt
+objs[['nt']] <- new_nt
+
+setwd("C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs")
+saveRDS(objs, file = "02.objs.at_ad_nnt_sp_xe_hy.umap.rds")
+
+# subset seurat using 1to1 orthologs
+sub_objs <- list()
+for(n in names(objs)){
+  orthologs <- df_genes_1to1[[n]]
+  sub_objs[[n]] <- subset(objs[[n]], features = orthologs[orthologs %in% rownames(objs[[n]])])
+  sub_objs[[n]]$species = n
+  
+  # replace gene name with common name
+  gene_map <- setNames(df_genes_1to1$sname, df_genes_1to1[[n]])
+  old_name <- rownames(sub_objs[[n]])
+  new_name <- ifelse(old_name %in% names(gene_map), gene_map[old_name], old_name)
+  rownames(sub_objs[[n]]) <- new_name
+  
+  # append cell type info
+  sub_objs[[n]]$cell_type <- paste0(n," ",objs[[n]]$cell_type)
+}
+
+# all orthologs
+common_genes <- Reduce(intersect, lapply(sub_objs, rownames))
+
+# seurat selected
+features <- SelectIntegrationFeatures(object.list = sub_objs)
+anchors <- FindIntegrationAnchors(object.list = sub_objs, anchor.features = common_genes)
+
+anchors.1142 <- anchors
+anchors.1to1_all <- anchors
+
+#anchors <- FindIntegrationAnchors(object.list = sub_objs, anchor.features = features)
+combined <- IntegrateData(anchorset = anchors, k.weight=100, features.to.integrate = common_genes)
+
+saveRDS(combined, file = "03.seurat_integrated.at_ad_nt_sp_xe.4456.rds")
+
+average_expression <- AverageExpression(combined, assay = "integrated", layer="data", group.by = 'cell_type')
+dist_matrix <- dist(t(average_expression$integrated))
+
+tree <- nj(dist_matrix)
+plot(tree)
+write.tree(tree, file = "tree.seurat_integrated.cell_type.all_1to1.nwk")
+
+
+###################################################
+# samap adata cell type tree 20250520 
+# output.klog2::using samap adata 
+# output.klog2:: - coral cell type tree SAMAP integration 20250320
+setwd('C:\\Users\\kjia\\workspace\\coral\\cell_type_tree\\samap')
+allnj <- nj(as.dist(as.matrix(read.table("wmat.samap.allgenes.tsv", sep='\t', header = TRUE))))
+plot(allnj,'u', cex = 0.7)
+write.tree(allnj, file = "tree.samap.cell_type.allgenes.nwk")
+
+
+
+###################################################
+# check progenitor::clusters marker gene ranking and cell entropy 20250519
+# output: 
+
+rm(list=ls())
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\01.objs.at_ad_nt_sp_xe_hy.umap.rds')
+setwd('C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw')
+prefs <- c('ad','at','nt','sp','xe','hy')
+
+#pref <- 'ad'
+for(s in prefs){
+  Idents(objs[[s]])<-objs[[s]]$cell_type
+}
+
+# generate de ratio csv
+top_n <- 150
+marker_dfs <- list()
+for(pref in prefs){
+  std_obj <- objs[[pref]]
+  # make sure levels(std_obj) is correct
+  avg_mat <- AverageExpression(std_obj, verbose = F) %>% .[[DefaultAssay(std_obj)]] %>% log1p()
+
+  results <- list()
+  for( c in levels(std_obj)){
+    markers_df <- FindMarkers(std_obj, ident.1 = c, only.pos = TRUE) # data frame
+    markers_df <- markers_df[order(markers_df$p_val_adj, -markers_df$avg_log2FC), ]
+    avg_markers_mat <- avg_mat[rownames(markers_df), ]
+    # apply() returns the column name of maximum expr per row in the matrix
+    markers_df$max_cluster <- colnames(avg_markers_mat)[apply(avg_markers_mat, 1, which.max)]
+    r <- sum(head(markers_df, top_n)$max_cluster == gsub("_", "-", c)) / top_n # gsub(): average_expression will change colnames to remove "_"
+    results[[as.character(c)]] <- r
+    marker_dfs[[paste0(pref,"::",c)]] <- markers_df
+    print(paste0(pref,"::", sprintf(r, fmt = '%#.2f'),": ", c))
+  }
+  sorted_results <- results[order(unlist(results), decreasing = TRUE)]
+  results_df <- data.frame(cluster = names(sorted_results), r_top_n = unlist(sorted_results))
+  write.csv(results_df, paste0(pref, ".de_ratio_", top_n, ".tsv"), row.names = FALSE)
+}
+
+
+## load de_ratio from saved files
+for(pref in prefs){
+  df <- read.csv(paste0(pref, ".de_ratio_", top_n, ".tsv"), stringsAsFactors = FALSE)
+  results <- setNames(as.list(df$r_top_n), df$cluster)
+  
+  std_obj <- objs[[pref]]
+  de_ratio <- sapply(as.character(Idents(std_obj)), function(cl) results[[cl]])
+  std_obj$de_ratio <- unname(de_ratio)
+  #std_obj <- RunUMAP(std_obj, dims = 1:40, min.dist = 0.1, umap.method = "umap-learn", metric = "cosine", verbose = FALSE)
+  
+  fp <- FeaturePlot(object = std_obj, features = 'de_ratio', reduction="umap", pt.size = 1.5, alpha = 0.7)
+  fp <- LabelClusters(plot = fp, id = "ident") + labs(title = paste0("DE genes ratio (", pref, ")"))
+  ggsave(paste0(pref, ".de_ratio_", top_n, ".featurePlot.pdf"), plot = fp, width = 16, height = 16)
+  print(paste0("save ", pref, ".de_ratio_", top_n, ".featurePlot.pdf"))
+}
+
+#[1] "save ad.de_ratio_150.featurePlot.pdf"
+#[1] "save at.de_ratio_150.featurePlot.pdf"
+#[1] "save nt.de_ratio_150.featurePlot.pdf"
+#[1] "save sp.de_ratio_150.featurePlot.pdf"
+#[1] "save xe.de_ratio_150.featurePlot.pdf"
+#[1] "save hy.de_ratio_150.featurePlot.pdf"
+
+## debug ###################################################
+for(s in prefs){
+  print(s)
+  Idents(objs[[s]]) <- objs[[s]]$cell_type
+  print(levels(objs[[s]]))
+}
+objs[['ad']]$cell_type <- objs[['ad']]$samap_family
+objs[['at']]$cell_type <- objs[['at']]$samap_family
+saveRDS(objs, file = "01.objs.at_ad_nt_sp_xe_hy.rds")
+
+##
+sum(head(marker_dfs[['hy::precursors_neuron']]$max_cluster,150) == 'precursors-neuron')/150
+marker_dfs[['nt::neurogland.all.SGD.early']]
+
+#std_obj <- RunTSNE(std_obj, dims = 1:40)
+# save original df
+#saveRDS(objs, file = "01.cell_type_de_df.at_ad_nt_sp_xe_hy.rds")
+
+
+## entropy ###################################################
+## 
+
+top_n <- 150
+#n_top_variable = 2000
+h <- function(p) {
+  p <- p[p > 0]  # avoid log(0)
+  sum(p * log(p))
+}
+
+for(pref in prefs){
+  std_obj<-objs[[pref]]
+  # slice count matrix by n top variable genes
+  #gene_set <- head(VariableFeatures(std_obj), n_top_variable)
+
+  markers_df <- FindAllMarkers(std_obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+  markers_by_cluster <- split(markers_df, markers_df$cluster)
+  
+  top_genes_list <- lapply(markers_by_cluster, function(df) {
+    top_genes <- head(df[order(df$p_val_adj, -df$avg_log2FC), "gene"], top_n)
+    return(top_genes)
+  })
+  gene_set <- unique(unlist(top_genes_list))  
+  
+
+  raw_counts <- GetAssayData(std_obj, assay = "RNA", slot = "counts")
+  raw_mat <- raw_counts[gene_set, ]
+  
+  # convert cell expr into prob
+  count_mat <- as.matrix(raw_mat)
+  prob_mat <- apply(count_mat, 2, function(x) {if (sum(x) == 0) rep(0, length(x)) else x / sum(x)})
+  
+  # calculate entropy for each cell
+  print(paste0('calculating entropy for ', pref))
+  cell_entropy <- apply(prob_mat, 2, h)
+  
+  # save for future tuning
+  h_df=as.data.frame(cell_entropy)
+  write.table(h_df, paste0(pref, ".entropy_", top_n, ".tsv"), sep=",",  col.names=FALSE)
+
+  # featureplot
+  std_obj$cell_entropy <- cell_entropy  
+  fp <- FeaturePlot(object = std_obj, features = 'cell_entropy', reduction="umap", pt.size = 1.5, alpha = 0.7)
+  fp <- LabelClusters(plot = fp, id = "ident") + labs(title = paste0("Cell entropy (", pref, ")"))
+  ggsave(paste0(pref, ".cell_entropy_", top_n, ".featurePlot.pdf"), plot = fp, width = 16, height = 16)
+  print(paste0("save ", pref, ".cell_entropy_", top_n, ".featurePlot.pdf"))  
+}
+
+
+#std_obj<-objs[['nt']]
+
+
+
+### debug ############################
+for(s in prefs){
+  if("umap" %in% names(objs[[s]]@reductions)){
+    print(paste0('skip ', s))
+  }else{
+    print(paste0('running umap for ', s))
+    objs[[s]] <- RunUMAP(objs[[s]], dims = 1:40, min.dist = 0.1, umap.method = "umap-learn", metric = "cosine", verbose = FALSE)
+  }
+}
+saveRDS(objs, file = "01.objs.at_ad_nt_sp_xe_hy.umap.rds")
+
+install.packages('scico')
+library(scico)
+
+
+
 
 ###################################################
 setwd('C:\\Users\\kjia\\workspace\\others\\roy\\stage')
@@ -48,6 +563,283 @@ rm(list=ls())
 source('coral_ppl.R')
 dm2023_obj <- mtx2seurat('dm2023.counts.mtx', 'dm2023.barcodes.tsv', 'dm2023.genes.tsv', 'dm2023.assignments.tsv', 'dm2023')
 save(dm2023_obj, file=dm2023.seurat.rd) 
+
+
+###################################################
+#sponge synaptic gene coexpression profile 20250505
+# output.klog2:: - synaptic proteins ppi 20250503 Sat::> update list Roy's 20250505
+rm(list=ls())
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+setwd('C:\\Users\\kjia\\workspace\\samap_general\\R')
+std_obj <- readRDS('spongilla_seurat_object_corrected.rds')
+
+## fix the old seurat object
+std_obj <- std_seurat_ppl(std_obj)
+std_obj <- FindVariableFeatures(std_obj, selection.method = "vst", nfeatures = 2000)
+
+counts <- GetAssayData(std_obj, layer = "counts")
+new_obj <- CreateSeuratObject(counts = counts)
+new_obj@meta.data <- std_obj@meta.data
+
+std_obj <- std_seurat_ppl(new_obj)
+Idents(std_obj) <- std_obj$cell_type
+saveRDS(std_obj, file = "00.sl.std.rds")
+
+## 
+std_obj <- readRDS("00.sl.std.rds")
+# load from ppi list 
+setwd("C:\\Users\\kjia\\workspace\\ppi\\stage")
+
+ppi_df <- read.table("240.sl.ppi.genepair.list", sep = "\t", header = FALSE)
+ppi_genes <- unique(c(ppi_df$V1, ppi_df$V2))
+
+expr_matrix <- GetAssayData(std_obj, layer = "data")
+
+i=1
+df_list <- list()
+for(c in levels(std_obj)){
+  cells_in_cluster <- WhichCells(std_obj, idents = c)
+  expr_matrix_target <- expr_matrix[ppi_genes, cells_in_cluster]
+  expr_matrix_t <- t(as.matrix(expr_matrix_target)) # transpose to get gene-gene correlation
+  cor_mat <- cor(expr_matrix_t, method = "pearson")
+  sub_ppi_df <- ppi_df
+  sub_ppi_df$correlation <- mapply(function(g1, g2) cor_mat[g1, g2], ppi_df$V1, ppi_df$V2)
+  sub_ppi_df$cluster <- c
+  df_list[[i]] <- sub_ppi_df
+  i=i+1
+}
+
+library(dplyr)
+final_df <- bind_rows(df_list)
+write.table(final_df, file = "241.sl.ppi.genepair.cor.tsv",sep = "\t", row.names = FALSE, quote = FALSE)
+
+
+
+##########debug discarded in the pipeline
+gene_list <- rownames(std_obj)
+# k: c10000-g1, v: full annotation
+gene_dict <- named_vector <- setNames(gene_list, sapply(strsplit(gene_list, " "), `[`, 1))
+
+g1 = "c100097-g1 (Jacalin) - emapper OG"
+g2 = "c104192-g1 (cathepsin) - emapper OG"
+cor_mat[g1,g2]
+
+n_cells <- nrow(expr_matrix_t)
+r <- 0.01326284
+z <- sqrt(n_cells -3) * 0.5 * log((1 + r) / (1 - r))
+p <- 2 * pnorm(-abs(z))
+
+
+###################################################
+# Roy sponge gene expression barplot 20250429
+# output.klog2:: - Roy sponge gene expression barplot 20250429
+
+rm(list=ls())
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+setwd('C:\\Users\\kjia\\workspace\\samap_general\\R')
+std_obj <- readRDS('spongilla_seurat_object_corrected.rds')
+
+setwd('C:\\Users\\kjia\\workspace\\others\\roy\\stage.gene_experssion')
+write.table(rownames(std_obj), file = 'sl.rds.gene.list', quote=FALSE, row.names=FALSE, col.names=FALSE)
+
+unique(std_obj$cell_type)
+unique(std_obj$cell_type_family)
+
+
+species <-c('sl')
+gene_list_file <- 'sl.gene.list'
+Idents(std_obj) <- std_obj$cell_type
+Idents(std_obj) <- factor(Idents(std_obj), levels = sort(levels(std_obj)))
+
+gene_set <- read.csv(gene_list_file, header = FALSE, sep = "\t")
+gene_set <- gsub("_", "-", gene_set[[1]])
+gene_set <- gene_set[gene_set %in% rownames(std_obj)]
+
+for(pref in species){
+  print(gene_list_file)
+  # vlnPlt
+  for (gene in gene_set) {
+    gg <- VlnPlot(std_obj, features = gene, ncol=1, pt.size = 0) + #, group.by = cname) +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) + NoLegend()
+    outname = paste0(pref,'_vlnplot_', str_norm(gene),'.pdf')
+    
+    print(outname)
+    ggsave(file=outname, plot=gg, width = 16, height = 10)  
+  }
+}
+
+average_expression <- AverageExpression(std_obj, features = gene_set, layer="data")
+for(pref in species){
+  # barplt
+  for (gene in gene_set) {
+    gene_expression <- average_expression$RNA[gene, ]
+    gene_df <- data.frame(Cluster = names(gene_expression),Expression = as.numeric(gene_expression))
+    
+    gg <- ggplot(gene_df, aes(x = Cluster, y = Expression, fill = 'red'))  +
+      geom_bar(stat = "identity") +
+      ylim(0, 20) +
+      ggtitle(gene) +
+      labs(x = "Cluster", y = "Average raw counts") +
+      theme_minimal() +
+      NoLegend()
+    
+    gg <- gg + theme(axis.text.x = element_text(size=16, angle = 90, hjust = 1))
+    
+    outname = paste0(pref,'_barplot_', str_norm(gene),'.pdf')
+    print(outname)
+    if(pref=='at'||pref=='ad'){
+      ggsave(file=outname, plot=gg, width = 16, height = 12) # for samap_family
+    } else{
+      ggsave(file=outname, plot=gg, width = 16, height = 8) # cell type family
+    }
+  }
+}
+
+###################################################
+# nematostella sox2 vlnplot & barplot ad, at, hy, nt sp, xe 20250428
+# output.klog2:: - nematostella sox2 gene expression barplot vlnplot 20250428
+
+rm(list=ls())
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+setwd('C:\\Users\\kjia\\workspace\\nematostella\\stage.sox2')
+objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\00.objs.at_ad_nt_sp_xe_hy.rds')
+
+species <- c('ad','at','hy','nt','sp','xe')
+gname <- 'sox2' 
+
+species <-c('xe')
+for(pref in species){
+  #pref <- 'xe' # ad,at,hy,nt,sp,xe
+  gene_list_file <- paste0('03.sox2_to_',pref,'.gene.list')
+  print(gene_list_file)
+  gene_set <- read.csv(gene_list_file, header = FALSE, sep = "\t")
+  gene_set <- gsub("_", "-", gene_set[[1]])
+  gene_set <- gene_set[gene_set %in% rownames(objs[[pref]])]
+  cname <- 'cell_type_family'
+  Idents(objs[[pref]]) <- objs[[pref]]$cell_type_family
+  
+  # vlnPlt
+  for (gene in gene_set) {
+    gg <- VlnPlot(objs[[pref]], features = gene, ncol=1, pt.size = 0, group.by = cname) +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) + NoLegend()
+    outname = paste0(pref,'_vlnplot_', gname,'_',gene,'.pdf')
+    
+    print(outname)
+    ggsave(file=outname, plot=gg, width = 16, height = 10)  
+  }
+  
+  # barplt
+  average_expression <- AverageExpression(objs[[pref]], features = gene_set, layer="data")
+  for (gene in gene_set) {
+    gene_expression <- average_expression$RNA[gene, ]
+    gene_df <- data.frame(Cluster = names(gene_expression),Expression = as.numeric(gene_expression))
+    
+    gg <- ggplot(gene_df, aes(x = Cluster, y = Expression, fill = 'red'))  +
+      geom_bar(stat = "identity") +
+      ylim(0, 20) +
+      ggtitle(gene) +
+      labs(x = "Cluster", y = "Average raw counts") +
+      theme_minimal() +
+      NoLegend()
+    
+    gg <- gg + theme(axis.text.x = element_text(size=16, angle = 90, hjust = 1))
+    
+    outname = paste0(pref,'_barplot_', gname,'_',gene,'.pdf')
+    print(outname)
+    if(pref=='at'||pref=='ad'){
+      ggsave(file=outname, plot=gg, width = 16, height = 12) # for samap_family
+    } else{
+      ggsave(file=outname, plot=gg, width = 16, height = 8) # cell type family
+    }
+  }
+}
+
+
+std_obj<-objs[['xe']]
+max(std_obj[['RNA']]$counts)
+max(std_obj[['RNA']]$data)
+gene_df
+
+###################################################
+# nematostella znf845 & pax2a vlnplot & barplot ad, at, sp, xe, nt 20250415
+# output.klog2:: - nematostella gene expression barplot vlnplot 20250415
+
+rm(list=ls())
+source('coral_ppl.R')
+# just for loading .rd data
+setwd('C:\\Users\\kjia\\workspace\\foxd\\stage.foxd_gene_expression')
+
+objs <- list()
+load('01.ad3456.clean.samap_family.rd')
+objs[['ad']] <- std_obj
+load('01.at345.clean.samap_family.rd')
+objs[['at']] <- std_obj
+#load('01.nt.info2.rd')
+#std_obj <- std_seurat_ppl(std_obj)
+std_obj <- readRDS('011.nt.seurat.info2.umap.rds')
+objs[['nt']] <- std_obj
+load('sp.seurat.info3.rd')
+objs[['sp']] <- std_obj
+load('xe.seurat.info3.rd')
+objs[['xe']] <- std_obj
+load('hy.seurat.info3.rd')
+objs[['hy']] <- std_obj
+
+objs[['at']]$cell_type_family <- objs[['at']]$samap_family
+objs[['ad']]$cell_type_family <- objs[['ad']]$samap_family
+
+saveRDS(objs, file = "00.objs.at_ad_nt_sp_xe_hy.rds")
+# generating figures
+setwd('C:\\Users\\kjia\\workspace\\nematostella\\stage.znf845_pax2a')
+
+pref <- 'xe' # ad,at,hy,nt,sp,xe
+gname <- 'pax' # znf, pax
+gene_list_file <- paste0('01.prost.zg_to_',pref,'.tsv.', gname,'.tsv.gene.list')
+gene_set <- read.csv(gene_list_file, header = FALSE, sep = "\t")
+gene_set <- gsub("_", "-", gene_set[[1]])
+gene_set <- gene_set[gene_set %in% rownames(objs[[pref]])]
+cname <- 'cell_type_family'
+Idents(objs[[pref]]) <- objs[[pref]]$cell_type_family
+
+
+# vlnPlt
+for (gene in gene_set) {
+  gg <- VlnPlot(objs[[pref]], features = gene, ncol=1, pt.size = 0, group.by = cname) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) + NoLegend()
+  outname = paste0(pref,'_vlnplot_', gname,'_',gene,'.pdf')
+  
+  print(outname)
+  ggsave(file=outname, plot=gg, width = 16, height = 10)  
+}
+
+# barplt
+average_expression <- AverageExpression(objs[[pref]], features = gene_set, layer="data")
+for (gene in gene_set) {
+  gene_expression <- average_expression$RNA[gene, ]
+  gene_df <- data.frame(Cluster = names(gene_expression),Expression = as.numeric(gene_expression))
+  
+  gg <- ggplot(gene_df, aes(x = Cluster, y = Expression, fill = 'red'))  +
+    geom_bar(stat = "identity") +
+    ylim(0, 20) +
+    ggtitle(gene) +
+    labs(x = "Cluster", y = "Average raw counts") +
+    theme_minimal() +
+    NoLegend()
+  
+  gg <- gg + theme(axis.text.x = element_text(size=16, angle = 90, hjust = 1))
+
+  outname = paste0(pref,'_barplot_', gname,'_',gene,'.pdf')
+  print(outname)
+  if(pref=='at'||pref=='ad'){
+    ggsave(file=outname, plot=gg, width = 16, height = 12) # for samap_family
+  } else{
+    ggsave(file=outname, plot=gg, width = 16, height = 8) # cell type family
+  }
+  
+  #ggsave(file=outname, plot=gg, width = 32, height = 8) # metacell
+  #ggsave(file=outname, plot=gg, width = 24, height = 8) # nt cell type
+  #ggsave(file=outname, plot=gg, width = 16, height = 8) # cell type family
+}
 
 ###################################################
 # foxd homolog genes vlnplot & barplot ad, at, sp, xe, nt 
@@ -622,7 +1414,7 @@ sum(colnames(obj) != colnames(obj[["RNA"]]$counts))
 
 
 ######################################################
-# acropora cell type tree 20241218 20250317 20250402
+# acropora cell type tree 20241218 20250317 20250402 20250421
 # kjia@DESKTOP-L0MMU09 ~/workspace/library/repository/SATURN/stage.coral 2025-03-17 11:14:47
 
 library(tidyr)
@@ -642,9 +1434,65 @@ rm(list=ls())
 #source('coral_ppl.R')
 source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
 
+###################################################
+# tree validation alga-hosting branch shared marker genes
+# output.klog2:: - coral cell type tree validation 20250404 20250421:: > shared marker genes heatmap
+setwd('C:\\Users\\kjia\\workspace\\coral\\cell_type_tree\\samap')
+
+objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\00.objs.at_ad_nt_sp_xe_hy.rds')
+clusters <- list(
+  'ad' = c('alga-hosting_cells - gastrodermis (2) - g22'),
+  'at' = c('alga-hosting_cells - gastrodermis (2) - g43'),
+  'nt' = c('all.gastrodermis.early.2'),
+  'sp' = c('alga-hosting_cells'),
+  'xe' = c('alga-hosting_cells')
+)
+
+Idents(objs[['ad']]) <- objs[['ad']]$cell_type_family
+Idents(objs[['at']]) <- objs[['at']]$cell_type_family
+Idents(objs[['nt']]) <- objs[['nt']]$cell_type
+Idents(objs[['sp']]) <- objs[['sp']]$cell_type
+Idents(objs[['xe']]) <- objs[['xe']]$cell_type
+
+df <- top_markers(objs, clusters, 50)
+write.table(df$values, file = "30.alga-hosting_marker_genes.tsv", 
+              sep = "\t", quote = FALSE, row.names = FALSE, col.names=FALSE)
+
+setwd('C:\\Users\\kjia\\workspace\\coral\\cell_type_tree\\samap')
+mat <- as.matrix(read.table("sgn.mat", sep = " ", header = FALSE))
+cname <- read.csv("sg.txt", header = FALSE, sep = "\t")
+colnames(mat) <- cname$V1
+rownames(mat) <- cname$V1
+pheatmap(mat, cluster_cols = F, cluster_rows = F, scale = 'none', treeheight_row = 0, treeheight_col = 0)
+
+
+
+
+
+## debug
+top_n=10
+top_markers_list <- list()
+for (sn in names(clusters)) {
+  species_clusters <- clusters[[sn]]
+  
+  for (c in species_clusters) {
+    print(paste0('calculating marker genes for ', sn, ':', c))
+    markers <- FindMarkers(objs[[sn]], ident.1 = c)
+    top_genes <- markers %>% arrange(desc(avg_log2FC)) %>% head(top_n) %>% rownames()
+    
+    # append species name
+    list_name <- paste(sn, c, sep = "_")
+    top_markers_list[[list_name]] <- paste(sn, top_genes, sep="_")
+  }
+}
+marker_df <- stack(top_markers_list)
+write.table(marker_df$values, file = "30.alga-hosting_marker_genes.tsv", 
+            sep = "\t", quote = FALSE, row.names = FALSE, col.names=FALSE)
+
 #####################################
 # 20250408 validate saturn cell type tree adat
 
+## individual cell type tree
 load('01.nt.seurat.info2.umap.rd')
 std_obj <- std_seurat_ppl(std_obj, umap = T)
 #std_obj <- RunUMAP(std_obj, dims = 1:40, min.dist = 0.1, umap.method = "umap-learn", metric = "cosine", verbose = FALSE)
@@ -652,8 +1500,15 @@ saveRDS(std_obj, file = "011.nt.seurat.info2.umap.rd")
 
 ##
 load('10.ad.clean.sym_split.filtered.smap_names.rd')
-load('10.at.clean.sym_split.filtered.smap_names.rd')
+std_obj$cell_type = std_obj$samap_family 
+saveRDS(std_obj, file = "011.ad.samap_cell_type.rds")
+s_obj <- readRDS("011.ad.samap_cell_type.rds")
 
+load('10.at.clean.sym_split.filtered.smap_names.rd')
+std_obj.v1223$cell_type = std_obj.v1223$samap_family
+saveRDS(std_obj.v1223, file = "011.at.samap_cell_type.rds")
+
+###
 pc_features <- Seurat::Loadings(std_obj, reduction = "pca")
 top_genes <- unique(rownames(pc_features[, 1:40]))
 avg_expr <- AverageExpression(std_obj, features = top_genes, group.by = "samap_family")
@@ -667,9 +1522,12 @@ plot(nj_matrix_tree)
 write.tree(nj_matrix_tree, file = "tree.at.cell_type.40pc.nwk")
 
 
-
-
-
+## adat integration cell type tree
+#output.klog2::> saturn integration cell type tree
+dist_matrix <- read.table("distance_matrix_PCs.txt", header = TRUE, row.names = 1, sep = "\t")
+tree <- nj(as.dist(dist_matrix))
+plot(tree)
+write.tree(tree, file = "tree.adat_saturn.samap_family.40pc.nwk")
 
 
 

@@ -398,10 +398,19 @@ def _search_worker_sp(thr, gothr, qnames,qdb,tnames,tdb, go,goFrq,goDesc, mem, t
         s=st.median_abs_deviation(dbdiff)*1.4826
         zscore = (dbdiff-m)/s
         e = st.norm.cdf(zscore)*ldb
-        res = np.where(e < thr)[0]
-        sort = np.argsort(e[res])
+
+        # threasholding
+        dbdiff = dbdiff/2
+        if thr > 10.0:
+            res = np.where(dbdiff < thr)[0] # distance as threshold
+            sort = np.argsort(dbdiff[res])
+        else:
+            res = np.where(e < thr)[0] # evalue as threshold
+            sort = np.argsort(e[res])
+
         res = res[sort]
-        dbdiff = dbdiff[res]/2
+        #dbdiff = dbdiff[res]/2
+        dbdiff = dbdiff[res]
         evals = e[res]
         names = tnames[res]
 
@@ -548,7 +557,7 @@ PROST [python package](https://github.com/MesihK/prost) can be used to generate 
 
 @click.command()
 @click.option('--flag', default='def', help='set to sp for parsing uniprot name')
-@click.option('--thr', default=0.05, help='E-value threshold for homolog detection')
+@click.option('--thr', default=0.05, help='E-value or prost distance threshold for homolog detection')
 @click.option('-n', '--jobs', default=1, help='Number of jobs to run in parallel')
 @click.argument('querydb', type=click.Path(exists=True,file_okay=True,dir_okay=False))
 @click.argument('targetdb', type=click.Path(exists=True,file_okay=True,dir_okay=False))
@@ -565,8 +574,8 @@ An e-value threshold can be specified with --thr flag. The default e-value thres
     print(f'You can use `prost tojsonwp` command to convert {out}.tsv results into a webpage!')
 
 @click.command()
-@click.option('--flag', default='sp', help='E-value threshold for homolog detection')
-@click.option('--thr', default=0.05, help='E-value threshold for homolog detection')
+@click.option('--flag', default='sp', help='Separate sprot search with proteome search')
+@click.option('--thr', default=0.05, help='E-value or prost distance threshold for homolog detection')
 @click.option('--gothr', default=0.05, help='E-value threshold for GO annotation')
 @click.option('-n', '--jobs', default=1, help='Number of jobs to run in parallel')
 @click.argument('querydb', type=click.Path(exists=True,file_okay=True,dir_okay=False))

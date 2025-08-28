@@ -735,6 +735,25 @@ def getcolumns(arglist):
 			fout.write(outstr)
 	cp._info('column(s) data save to %s' % outfile)
 
+# refactored version of getsinglemsa() 20250825
+def getsingleseq(args):
+	assert len(args) == 3, 'Usage: python utils_pfammsa.py getsingleseq fasfile "header" outfile'
+	fasfile = args[0]
+	header = args[1]
+	outfile =args[2]
+
+	outlist = [s for s in cp.fasta_iter(fasfile) if s[0] == header]
+	if len(outlist) > 1:
+		cp._info("error: %d sequences with header duplication [%s] found" % (len(outlist), header))
+		return
+	if len(outlist) == 0:
+		cp._info('error: no sequence with header [%s] found' % header)
+		return
+	
+	with open(outfile, 'w') as fout:
+		fout.write('>%s\n%s\n' %(outlist[0][0], outlist[0][1]))
+	cp._info('save sequence to %s' % outfile)
+	
 
 # get single MSA gapped / ungapped fa with sequence name or null
 '''
@@ -755,7 +774,7 @@ def getsinglemsa(arglist):
 	msa = 'null'
 	if head!='null':
 		for s in pfm.msalist:
-			if head in s[0]:
+			if head == s[0]:
 				msa = s
 	# no head, get the first MSA
 	else:
@@ -766,11 +785,12 @@ def getsinglemsa(arglist):
 
 	outseqfile = '%s_seq.fa' % outprefix
 	with open(outseqfile, 'w') as fp:
-		fp.write('>%s\n%s' % (msa[0],msa[1].translate(None, ''.join(cp.gaps))))
+		#fp.write('>%s\n%s' % (msa[0],msa[1].translate(None, ''.join(cp.gaps))))
+		fp.write('>%s\n%s\n' % (msa[0],msa[1].translate(str.maketrans('','',''.join(cp.gaps)))))
 
 	outmsafile = '%s_MSA.fa' % outprefix
 	with open(outmsafile, 'w') as fp:
-		fp.write('>%s\n%s' % (msa[0],msa[1]))
+		fp.write('>%s\n%s\n' % (msa[0],msa[1]))
 
 	cp._info('save [%s] raw seq : %s , MSA seq : %s' % (head, outseqfile, outmsafile))
 
@@ -784,7 +804,7 @@ def getsinglemsa_r(args):
 	pfm = pfammsa(msafile, opt='rna')
 	outmsa=''
 	for s in pfm.msalist:
-		if header in s[0]:
+		if header == s[0]:
 			outmsa = '>%s\n%s\n' % (s[0], s[1])
 			outseq = '>%s\n%s\n' % (s[0], s[1].translate(None, ''.join(cp.gaps)))
 			break
@@ -2196,6 +2216,7 @@ def main():
 		'freqlookup': freqlookup,
 		'freqlookupscol': freqlookupscol,
 		'getcolumns': getcolumns, # get columns from MSA
+		'getsingleseq': getsingleseq, # 20250825
 		'getsinglemsa': getsinglemsa, # get single MSA gapped / ungapped fa with sequence name or null
 		'getsinglemsa_r': getsinglemsa_r, # get single rna MSA 
 		'getbatchmsa': getbatchmsa, # utils_pfammsa.py getbatchmsa PF00000.txt header.list name_prefix outfile

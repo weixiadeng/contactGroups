@@ -1,6 +1,44 @@
 import numpy as np
 import commp as cp
 
+# mat in {r c v} format
+def flat2mat(args):
+    assert len(args) == 1, 'Usage: python utils_mat.py flat2mat flatmat.txt '
+    infile = args[0]
+    mdict = {}
+    rdict = {}
+    cdict = {}
+    for r in cp.loadtuples(infile):
+        mdict[(int(r[0]),int(r[1]))] = float(r[2])
+        rdict[r[0]] = 1
+        cdict[r[1]] = 1
+
+    # translate contact scores to [0,) (original scores have negative values)
+    m = min(mdict.values())
+    for k in mdict:
+        mdict[k] -= m
+    #ri = list(rdict.keys())
+
+    # get all seq_i and sort
+    ri = [int(i) for i in rdict.keys()]
+    ri.sort()
+    #ci = list(cdict.keys())
+    ci = [int(i) for i in cdict.keys()]
+    ci.sort()
+
+    outmat = np.zeros((len(ri), len(ci)))
+    for i in range(len(ri)):
+        for j in range(len(ci)):
+            k = (ri[i],ci[j])
+            outmat[i,j] = mdict[k] if k in mdict else 0.0
+    outprefix = infile + '.mat'
+    np.savetxt(outprefix+'.txt', outmat, fmt='%.8f')
+    np.savetxt(outprefix+'.rtick.txt', ri, fmt='%s')
+    np.savetxt(outprefix+'.ctick.txt', ci, fmt='%s')   
+
+    cp._info('save to %s.{rtick, ctick}.txt {sparse}}' % outprefix)
+
+
 # for bipartite matrix
 # col1 vs col2 strictly in flat file
 # compatible with string col ids
@@ -24,8 +62,8 @@ def flat2mat_bipartite(args):
     opt = args[3]
 
     flatdata = np.genfromtxt(infile, delimiter=' ', dtype='str')
-    r = flatdata[:,ics[0]]
-    c = flatdata[:,ics[1]]
+    r = flatdata[:,ics[0]].astype(int)
+    c = flatdata[:,ics[1]].astype(int)
     v = flatdata[:, vc].astype(float)
     ur,uc,outmat = _flat2mat_bipartite(r, c, v)
 

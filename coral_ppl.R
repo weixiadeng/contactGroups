@@ -256,6 +256,9 @@ go_enrichment <- function(params){
 	}
 	pwf <- nullp(params$gene.vector, bias.data=params$gene.lengths, plot.fit = FALSE)
 	goseq_ret <- goseq(pwf = pwf, gene2cat = params$gene2go, method = "Hypergeometric")
+	
+
+	#res <- goseq_ret %>% dplyr::filter(!is.na(term), over_represented_pvalue < 0.05, numDEInCat > 2) %>% arrange(over_represented_pvalue)
 	res <- goseq_ret %>% dplyr::filter(!is.na(term), over_represented_pvalue < 0.05, numDEInCat > 2) %>% arrange(over_represented_pvalue)
 	print(dim(res))
 	if(nrow(res)==0){
@@ -266,7 +269,16 @@ go_enrichment <- function(params){
   				theme(plot.margin = margin(0, 0, 0, 0))		
 	} else{
 		# plot top_n
-		res_plot <- head(res, params$top_n) %>% arrange(-over_represented_pvalue) # to make y axis inverse, put small p-value at top
+		##res_plot <- head(res, params$top_n) %>% arrange(-over_represented_pvalue) # to make y axis inverse, put small p-value at top
+	  ##go_plot<- ggplot(res_plot, aes(x=numDEInCat, y=term, colour=over_represented_pvalue, size=numDEInCat)) +
+
+	  ## add category	  
+	  cat <- unname(Ontology(res$category))
+	  res$term <- paste0("[", cat, "] - ", res$term)
+	  
+		res_plot <- head(res, params$top_n) %>% arrange(term)
+		#print(res_plot$term)
+		
 		go_plot<- ggplot(res_plot, aes(x=numDEInCat, y=term, colour=over_represented_pvalue, size=numDEInCat)) +
  			geom_point() +
  			expand_limits(x=0) +
@@ -283,7 +295,7 @@ goseq_clusters_dotplots <- function(obj, goseq_params, outprefix){
 		if(length(de.genes.df) > 0){
 			# go enrichment analysis
 			if(is.null(goseq_params$gene.lengths)){
-				message(glue("generate_cluster_dotplots_withmaps()::goseq_pararms$gene.lengths is NULL"))
+				message(glue("goseq_clusters_dotplots::goseq_pararms$gene.lengths is NULL"))
 				return(FALSE)
 			}
 			# generate gene.vector
@@ -317,12 +329,13 @@ goseq_clusters_dotplots <- function(obj, goseq_params, outprefix){
 # w_mat <- t(as.matrix(averages)[g6000_vec,]) 
 # ngene: number of highly expressed genes
 # expr_filter: threshold of percentage of expression
-wgcna_ppl_1 <- function(obj, ngene='all', expr_filter=20){
+wgcna_ppl_1 <- function(obj, ngene='all', expr_filter=20, overall_filter=1){
 	if(ngene=='all'){
+	  print(paste0("using ", ngene, " genes with ", "overall expr filter: ", overall_filter,"%"))
 		count_matrix <- GetAssayData(obj, slot = "data")
 		count_matrix <- 1 * (count_matrix>0)
 		num_cells_expressing_each_gene <- apply(count_matrix, MARGIN = 1, FUN = sum)
-		expressed_feature_index <- num_cells_expressing_each_gene > (ncol(count_matrix) * 0.01)
+		expressed_feature_index <- num_cells_expressing_each_gene > (ncol(count_matrix) * (overall_filter/100))
 		expressed_features <- row.names(count_matrix)[expressed_feature_index]		
 		#expressed_features <- row.names(count_matrix)
 	}else{
@@ -337,7 +350,7 @@ wgcna_ppl_1 <- function(obj, ngene='all', expr_filter=20){
 	}else{
 		genes_filtered <- expressed_features
 	}
-
+  #print(paste0("number of genes after filtered: ", length(genes_filtered)))
 	#averages <- AverageExpression(obj, verbose = F) %>% .[[DefaultAssay(obj)]] %>% log1p() ## DefaultAssay(obj)="RNA" may cause problem!
 	averages <- AverageExpression(obj, verbose = F) %>% .[[DefaultAssay(obj)]] %>% log1p()
 	w_mat <- t(as.matrix(averages)[genes_filtered,]) # wgcna requires rows as samples and columns as geneIDs
@@ -431,7 +444,7 @@ wgcna_dotplots_withmaps_0 <- function(obj, bwnet, me_wt, name_map, xn_map, max_g
 
 # order nj tips according to tree structure
 ordered_tips_apenj<-function(tree){
-	is_tip <- tree$edge[,2] <= length(tree$tip.label)
+	is_tip <- (tree$edge[,2] <= length(tree$tip.label))
 	return(tree$tip.label[tree$edge[is_tip, 2]])
 }
 
@@ -447,10 +460,18 @@ gene_filter_by_expr<-function(obj, genes_to_plot_all, filter_thr=20){
 	}
 	cluster_ids <- Idents(obj)
 	for (cluster in unique(cluster_ids)) {
+	  #print(cluster)
 		cells_in_cluster <- names(cluster_ids[cluster_ids == cluster])
 		cluster_expr_data <- module_expression[, cells_in_cluster]
-		percent_in_cluster <- (rowSums(cluster_expr_data > 0) / length(cells_in_cluster)) * 100
-		genes_filtered<-c(genes_filtered, names(percent_in_cluster)[percent_in_cluster>=filter_thr])
+		if(length(cluster_expr_data) == length(genes_to_plot_all)){
+		  message(glue("Warning: {cluster} has only one cell, skipped in calculating gene expression percentage."))
+		  next
+		}else{
+		  percent_in_cluster <- (rowSums(cluster_expr_data > 0) / length(cells_in_cluster)) * 100
+		  #print(class(percent_in_cluster))
+		  genes_filtered<-c(genes_filtered, names(percent_in_cluster)[percent_in_cluster>=filter_thr])		  
+		}
+
 	}
 	return(unique(genes_filtered))
 }
@@ -464,12 +485,13 @@ wgcna_dotplots_withmaps <- function(obj, bwnet, me_wt, name_map, xn_map, max_gen
 		message(glue("ordered label is different from levels(obj)"))
 		return(FALSE)
 	}	
-	obj@active.ident <- factor(Idents(obj), levels = x_ordered)
+	#obj@active.ident <- factor(Idents(obj), levels = x_ordered)
+	levels(obj) <- factor(x_ordered)
 	module_names <- unique(bwnet$colors)
 	#cluster_ids <- Idents(obj)
 	for(i in module_names){
 		# get genes of module i
-		print('ver 1021')
+		#print('ver 1021')
 		message(glue("\n\n module:  {i}."))
 		genes_to_plot_all <- me_wt[row.names(me_wt)[bwnet$colors == i], i, drop = F]
 		# genes_filtered<-rownames(genes_to_plot_all)
@@ -655,10 +677,15 @@ cluster_dotplots <- function(obj, clabels, yn_map, xn_map, outprefix){
         #gg<-gg + scale_x_discrete(labels = y_names$gene_alias) + scale_y_discrete(labels=x_names$alias) + ggtitle(sprintf("%s (%d)", i, sum(Idents(obj) == i)))
         gg<-gg +  ggtitle(sprintf("%s (%d)", i, sum(Idents(obj) == i)))
         outname <- paste0("output/", outprefix, "_c_", i, "_dotplot.pdf")
+        if(length(clabels)>=100){
+          w = 35
+        }else{
+          w = 30
+        }
         ggsave(filename = outname, 
                plot = gg, 
                path = ".",
-               width = 30, # 18
+               width = w, # 18
                height = (length(genes_for_dotplot) * (1/6)) + 20, # +2
                units = "in", 
                limitsize = F)
@@ -700,11 +727,15 @@ generate_cluster_dotplots_withmaps <- function(obj, yn_map, xn_map, x_ordered, g
 		#	next
 		#}
 		nc = sum(Idents(obj)==i)
-		if(nc<5){
+		if(nc<3){
 			message(glue("generate_cluster_dotplots_withmaps():: low cell number: {i}: {nc}"))
 			next
 		}
 		de.genes.df <- FindMarkers(obj, ident.1=i, only.pos = T)
+		if (nrow(de.genes.df) == 0) {
+		  message(paste0("No markers found in ",i))
+		  next
+		}
 		#cluster_markers_tibble <- as_tibble(rownames_to_column(FindMarkers(obj, ident.1=i, only.pos = T), var = "gene"))
 		cluster_markers_tibble <- as_tibble(rownames_to_column(de.genes.df, var = "gene"))
 		
@@ -715,7 +746,7 @@ generate_cluster_dotplots_withmaps <- function(obj, yn_map, xn_map, x_ordered, g
 			pull(gene) ## get gene column value of previous result as a vector
 		
 		
-		print(paste0("# of marker genes in ", i, ": ", length(genes_for_dotplot)))
+		print(paste0("# of marker genes in ", i, ": ", nrow(de.genes.df)))
 		if(length(genes_for_dotplot) > 0){
 			gg <- Seurat::DotPlot(object = obj, features = rev(genes_for_dotplot), cols = "RdYlBu") + coord_flip() +
 			theme(axis.text.x = element_text(hjust = 1, angle = 75))
@@ -752,7 +783,8 @@ generate_cluster_dotplots_withmaps <- function(obj, yn_map, xn_map, x_ordered, g
 				height = (length(genes_for_dotplot) * (1/6)) + 20, # +2
 				units = "in", 
 				limitsize = F)
-			count=count+1
+			print('enter here')
+			count = count+1
 			message(glue("Save to {outname}."))
 
 			# go enrichment analysis

@@ -4,9 +4,12 @@ import pandas as pd
 import scipy as sp
 import difflib
 import math
+import re
+import csv
 from itertools import groupby, combinations
 from scipy.spatial import distance
 from collections import OrderedDict, defaultdict
+from tqdm import tqdm
 #import matplotlib.pyplot as plt
 
 try:
@@ -27,6 +30,80 @@ class dotdict(dict):
     __delattr__ = dict.__delitem__
 
 _cscheme_seurat_dimplot=['#f8766d', '#7cae00', '#00bfc4', '#c77cff', '#e68613', '#0cb702', '#00b8e7', '#ed68ed', '#cd9600', '#00be67', '#00a9ff', '#ff61cc', '#aba300', '#00c19a', '#8494ff', '#ff68a1']
+
+############################################################################################
+# fucntions for database common procedure  --------------------------------------------------
+############################################################################################
+
+# parse swissprot fasta header
+# input:
+# >sp|Q6GZX4|001R_FRG3G Putative transcription factor 001R OS=Frog virus 3 (isolate Goorha) OX=654924 GN=FV3-001R PE=4 SV=1
+# output:
+# 0.accession  1.seq_name   2.desc                                 2.organism_name                 3.taxID   4.geneName
+# ['Q6GZX4', '001R_FRG3G', 'Putative transcription factor 001R', 'Frog virus 3 (isolate Goorha)', '654924', '_NA_']
+def _parse_uniprot_title(title):
+    # Ensure the title starts with ">"
+    if title.startswith(">"):
+        title = title[1:]
+
+    result = {
+        "accession_id": None,
+        "protein_name": None,
+        "description": None,
+        "organism": None,
+        "taxid": None,
+        "gene_name": None
+    }
+
+    # Regex pattern to extract fields
+    #match = re.match(r"sp\|([^|]+)\|([^ ]+) (.+?) OS=(.+?) OX=(\d+)(?: GN=([^ ]+))?", title)
+    match = re.match(r"(?:sp|tr)\|([^|]+)\|([^ ]+) (.+?) OS=(.+?) OX=(\d+)(?: GN=([^ ]+))?", title)
+
+    if match:
+        result["accession_id"] = match.group(1)
+        result["protein_name"] = match.group(2)
+        result["description"] = match.group(3).strip()
+        result["organism"] = match.group(4).strip()
+        result["taxid"] = match.group(5)
+        result["gene_name"] = match.group(6) if match.group(6) else '_NA_'
+    else:
+        # Fallback parsing if the main regex fails (optional enhancement)
+        parts = title.split()
+        if len(parts) >= 2 and '|' in parts[0]:
+            id_parts = parts[0].split('|')
+            if len(id_parts) >= 3:
+                result["accession_id"] = id_parts[1]
+                result["protein_name"] = id_parts[2]
+            desc_start = title.find(id_parts[2]) + len(id_parts[2]) + 1
+            desc_match = re.search(r" OS=", title)
+            if desc_match:
+                result["description"] = title[desc_start:desc_match.start()].strip()
+            for field in title.split():
+                if field.startswith("OS="):
+                    result["organism"] = title.split("OS=")[1].split(" OX=")[0]
+                if field.startswith("OX="):
+                    result["taxid"] = field.split("=")[1]
+                if field.startswith("GN="):
+                    result["gene_name"] = field.split("=")[1]
+
+    return [result["accession_id"],result["protein_name"],result["description"],result["organism"],result["taxid"],result["gene_name"], title]
+
+# cmd for parsing swissprot title
+# input: single column file with all titles
+# output: tsv 
+# 0.accession  1.seq_name   2.desc   2.organism_name   3.taxID   4.geneName
+# kjia@DESKTOP-L0MMU09 ~/workspace/annotations/stage.swissprot 2025-07-28 14:35:03
+# $ grep ">" uniprot_sprot.20250728.fasta > uniprot_sprot.20250728.titles
+def parse_uniprot_title(args):
+    from tqdm import tqdm
+    assert len(args)==2, 'Usage: pytghon proc_coral_samap.py parse_swissprot_title titlefile.txt outfile.tsv'
+    infile = args[0]
+    outfile = args[1]
+
+    outlist = np.array([_parse_uniprot_title(t) for t in tqdm(cp.loadlines(infile))], dtype=str)
+    np.savetxt(outfile, outlist, fmt='%s', delimiter='\t')
+    cp._info('Save parsed titles to %s' % outfile)
+
 
 ############################################################################################
 # fucntions for orthofinder --------------------------------------------------
@@ -258,16 +335,233 @@ def get_gene_name(args):
     cp._info('save to %s' % outfile)
 
 
+# parse emapper output: out.emapper.orthologs
+# species.cfg {species_name, taxID, short_name, gene__map_file}
+def emapper_anno(args):
+    assert len(args) == 3, 'Usage: python proc_coral_samap.py emapper_anno out.emapper.orthologs species.cfg outprefix'
+    infile = args[0]
+    cfgfile =args[1]
+    prefix = args[2]
+
+    # load priority scheme:species.cfg {species_name, taxID, short_name, gene__map_file}
+    stub = cp.loadtuples(cfgfile, delimiter='\t') 
+    # load gene names dictionary of dictionary
+    gndict={}
+    for s in stub:
+        gndict['%s(%s)' % (s[0],s[1])] = dict((v[0], v[1]) for v in cp.loadtuples(s[3], delimiter='\t'))
+
+    # groupby emapper data to species indexed dictionary
+    # 4 column tsv: {symbB.v1.2.000001       seed    Hammondia hammondi(99158)       *XP_008888840,*XP...}
+    # spdict[Hammondia hammondi(99158)] = [(symbB.v1.2.000001, seed, XP_008888840), (..)]
+    spdict = defaultdict(list)
+    for t in cp.loadtuples(infile, delimiter='\t', ignore='#'):
+        # {query_id, one2many, hit_ids, hit_gene_names}
+        if t[2] in gndict:
+            hits = t[3].split(',')
+            gn_map = gndict[t[2]]
+            spdict[t[2]].append((t[0], t[1], [v[1:] for v in hits], [gn_map[v[1:]] if v[1:] in gn_map else v[1:] for v in hits]))
+
+    outdict = {}
+    for s in stub[::-1]:
+        print('%s(%s)' % (s[0], s[1]), len(spdict['%s(%s)' % (s[0], s[1])]))
+        for v in spdict['%s(%s)' % (s[0], s[1])]: # iterate all records within one species
+            # symbB.v1.2.000001     symbB.v1.2.000001 one2many hs-TCL,TCL1
+            #outdict[v[0]] = '%s\t%s\t%s-%s' % (v[0], v[1], s[2], ','.join(v[3]))
+            outdict[v[0]] = '%s\t%s\t%s\t%s' % (v[0], v[1], s[0], ','.join(v[3]))
+
+    out = 'emapper.%s.gene_alias.tsv' % prefix
+    with open(out, 'w') as fout:
+        fout.write('%s\n' % '\n'.join(outdict.values()))
+    cp._info('save %d emapper gene alias to %s' % (len(outdict), out))
+
+
+# input: prost results:
+#0:[adig-s0001.g1]
+#1:[Q08431]
+#2:[Lactadherin]
+#3:[MFGE8]
+#4:[9606]
+#5:[Homo sapiens]
+#6:[5702.5]
+# input: species.cfg
+# (tax_name, tax_id, tax_symbol, emapper_gn.map)
+def prost_anno(args):
+    assert len(args) == 3, 'Usage: python proc_coral_samap.py prost_anno species.cfg'
+    infile = args[0]
+    cfgfile = args[1]
+    prefix = args[2]
+
+    hit_dict = defaultdict(list)
+    query_tax_dict = defaultdict(list)
+    for t in tqdm(cp.loadtuples(infile, delimiter='\t')):
+        if t[3]=="_NA_" or t[3] == "":
+            t[3] = t[2] # use protein name instead
+        # groupby query ID # dict[query_id] = [(tax_name, gene_name, prost_distance), (..), ..]
+        hit_dict[t[0]].append((t[5],t[3],float(t[6])))
+        # groupby (query ID, tax ID) # dict[query\ttax] = [(gene_name, prost_distance), (..), ..]
+        query_tax_dict[(t[0], t[5])].append((t[3],float(t[6])))
+    
+    # get top hit
+    outdict = dict((k,sorted(hit_dict[k], key=lambda v: v[2])[0]) for k in hit_dict)
+
+    # load priority scheme:species.cfg {species_name, taxID, short_name, gene__map_file}
+    for s in cp.loadtuples(cfgfile, delimiter='\t')[::-1]:
+        for k in query_tax_dict:
+            if s[0] == k[1]: # matching tax_ID
+                # (species, gene_list)
+                outdict[k[0]] = (s[0], ','.join([g[0] for g in sorted(query_tax_dict[k], key=lambda v: v[1])])) # sort [(gene_name, prost_distance)] by prost_distance
+
+    out = 'prost.%s.gene_alias.tsv' % prefix
+    with open(out, 'w') as fout:
+        fout.write('%s\n' % '\n'.join(['%s\thomolog\t%s\t%s' % (k, v[0], v[1]) for k,v in outdict.items()]))
+    cp._info('save %d prost gene alias to %s' % (len(outdict), out))
+
+# merge prost.ad.gene_alias.tsv and emapper.ad.gene_alias.tsv to prompt friendly gene annotations
+# according to species.cfg priority
+# input: 
+# emapper: adig-s0001.g319 one2many        Homo sapiens    TMEM161A,TMEM161B
+# prost: adig-s0001.g101 homolog Homo sapiens    CFAP418,EAPP
+# target output:
+# adig−s0005.g339   homologs    homo sapiens    TEK,IGSF9
+# adig−s0065.g17    one-to-one ortholog homo sapiens    ADAMTS14
+def merge_anno(args):
+    assert len(args) == 3, 'Usage: python proc_coral_samap.py merge_anno emapper.symb.gene_alias.tsv prost.symb.gene_alis.full.tsv symb'
+    emapper_file = args[0]
+    prost_file =args[1]
+    outfile = args[2]
+
+    _rel = {'one2one': 'one-to-one', 'one2many': 'one-to-many', 'many2many': 'many-to-many', 'many2one': 'many-to-one', 'seed': 'homolog'}
+    emapper_dict = dict((t[0], '%s\t%s ortholog\t%s\t%s' % (t[0], _rel[t[1]], t[2], t[3])) for t in cp.loadtuples(emapper_file, delimiter='\t'))
+    prost_dict = dict((t[0], '\t'.join(t)) for t in cp.loadtuples(prost_file, delimiter='\t'))
+
+    # merge key&value
+    merged_dict = prost_dict | emapper_dict # union key&values, emapper_dict overwrites keys in prost_dict
+
+    # output
+    with open(outfile, 'w') as fout:
+        fout.write('%s\n' % '\n'.join(merged_dict.values()))
+    cp._info('save pt gene annotation to %s' % outfile)
+    
+
+
+# updated function for merging prost and emapper gene alias
+# both gene alias files output from {prost_anno, emapper_anno} are 4-column {query, rel, tax_name, gene_names}tsv file with no header
+# emapper: adig-s0001.g319 one2many        Homo sapiens    TMEM161A,TMEM161B
+# prost: adig-s0001.g101 homolog Homo sapiens    CFAP418,EAPP
+# merging order : emapper > prost
+# output format: two-column tsv: {geneID  gene_ID+alias}
+# output: 1. gene alias with 50 characters cutoff for dotplot 
+# output: 2. merged full gene alias 
+def merge_alias(args):
+    assert len(args) == 5, 'Usage: python proc_coral_samap.py merge_alias emapper.symb.gene_alias.tsv prost.symb.gene_alias.tsv species.cfg full_gene.list outprefix'
+    emapper_file =args[0]
+    prost_file =args[1]
+    cfgfile = args[2]
+    gene_file = args[3]
+    outpref = args[4]
+
+    # load config file dict[species_name] = [species_symbol]
+    tndict = dict((t[0], t[2]) for t in cp.loadtuples(cfgfile, delimiter='\t'))
+
+    # emapper: adig-s0001.g319 one2many        Homo sapiens    TMEM161A,TMEM161B
+    emapper_dict = dict((t[0], '%s %s %s-%s' % (t[0], t[1], tndict[t[2]], t[3])) for t in cp.loadtuples(emapper_file, delimiter='\t'))
+    # adig-s0001.g101 homolog Homo sapiens    CFAP418,EAPP
+    prost_dict = dict((t[0], '%s %s' % (t[0], '%s-%s' % (tndict[t[2]], t[3]) if t[2] in tndict else 'top1-%s, %s' % (t[3], t[2]))) for t in cp.loadtuples(prost_file, delimiter='\t'))
+    # all genes
+    all_gene_dict = dict((t, t) for t in cp.loadlines(gene_file))
+    # output order: emapper > prost
+    merged_dict = all_gene_dict | prost_dict | emapper_dict # union key&values, emapper_dict overwrites keys in prost_dict
+
+    # output 1: full alias
+    outfile = '%s.gene_alias.full.tsv' % outpref
+    with open(outfile, 'w') as fout:
+        fout.write('geneID\tgene_alias_full\n%s\n' % '\n'.join(['%s\t%s' % (k, merged_dict[k]) for k in merged_dict]))
+    cp._info('save full gene alias to %s' % outfile)
+
+    # output 2: truncated alias (for dotplots)
+    outfile = '%s.gene_alias.tsv' % outpref
+    with open(outfile, 'w') as fout:
+        _t = lambda x: x if len(x)<=50 else '%s..' % x[:50]
+        fout.write('geneID\tgene_alias\n%s\n' % '\n'.join(['%s\t%s' % (k, _t(merged_dict[k])) for k in merged_dict]))
+    cp._info('save truncated gene alias to %s' % outfile)
+
+
+# upgraded ann_merge
+# generating {query_ID, gene_name_species1, gene_name_species2, ...} according to species.cfg
+def ann_merge_with_cfg(args):
+    assert len(args) == 3, 'Usage: python proc_coral_samap.py ann_merge_with_cfg species.stub in.allhits.cell.uid.pn.gd.gn.tax.tn.dis.tsv outfile'
+    cfgfile =args[0]
+    datafile = args[1]
+    outfile = args[2]
+
+    # species_name, tax_id, short_ID
+    stub = cp.loadtuples(cfgfile, delimiter='\t')
+    cp._info('load cfg priority: %s > top1' % ' > '.join([s[2] for s in stub]))
+
+    # load input data file; all values as string
+    df = pd.read_csv(datafile, sep='\t', names=['Query_gene_ID','Uniprot_ID','Protein_name','Gene_name','Taxon_ID','Taxon_name','PROST_distance'], dtype=str)
+    df=df.loc[df['Gene_name']!='_NA_']
+
+    # extract top hit
+    da = df.groupby('Query_gene_ID').apply(lambda x: sorted(list(zip(x['Query_gene_ID'], x['Uniprot_ID'], x['Protein_name'], x['Gene_name'], x['Taxon_ID'], x['Taxon_name'], x['PROST_distance'])), key=lambda tup: tup[6])[0])
+    da = da.reset_index(name='PROST_gene_name(top1)')
+
+    # organize for output top1 flat tsv
+    dt = pd.DataFrame(da['PROST_gene_name(top1)'].tolist(), columns=['Query_gene_ID', 'Uniprot_ID','Protein_name','Gene_name','Taxon_ID','Taxon_name','PROST_distance'])
+    dt.set_index('Query_gene_ID', inplace=True)
+    dt.to_csv('out.top1.tsv', sep='\t', index=True, header=True)
+    cp._info('save top1 df to out.top1.tsv')
+
+    # organize inot {Query_gene_ID, gene_name} for merging with other target species
+    da['PROST_gene_name(top1)'] = da['PROST_gene_name(top1)'].apply(lambda x: '%s, %s' % (x[3], x[5]))
+    da.set_index('Query_gene_ID', inplace=True)
+
+    # 1. Sorts x(groupby obj) by the column 'PROST_distance', converting PROST_distance value to float before sorting
+    # 2. extract 'Gene_name' column after sorting as a list
+    # 3. map all values from the list to str
+    # 4. join the str to a string by ','
+    f = lambda x: ','.join(map(str, x.sort_values(by='PROST_distance', key=lambda col: col.astype(float))['Gene_name'].tolist()))
+    for s in stub: # species_name, tax_id, short_ID
+        dh = df.loc[df['Taxon_ID']== s[1]]
+        dh = dh.groupby('Query_gene_ID').apply(f).reset_index()
+        dh.set_index('Query_gene_ID', inplace=True)
+        dh.rename(columns={0: 'PROST_gene_name(%s)' % s[2]}, inplace=True)
+        da = da.merge(dh, how='left', left_index=True, right_index=True)
+        da.fillna('_NA_', inplace=True)
+    da.to_csv(outfile, sep='\t', index=True, header=True)
+    cp._info('save merged {Query_gene_ID, gene_name1, ...} to %s' % outfile)
+
+    # generate gene name alias
+    column_order = ['PROST_gene_name(%s)' % s[2] for s in stub]
+    column_order.append('PROST_gene_name(top1)')
+    da = da[column_order] # make sure row.index.tolist() gives the correct priority order
+    print("output priority: ", da.columns.tolist())
+    def _choose_alias(row):
+        #_t = lambda x: x if len(x)<=50 else '%s..' % x[:50]
+        for c in row.index.tolist():
+            if row[c]!="_NA_": # top1 should always have value
+                #return "%s-%s" % (c[c.find('(')+1:-1],_t(row[c]))
+                return "%s-%s" % (c[c.find('(')+1:-1],row[c])
+        print("Fatal erro: ", row)
+        return "_NA_"
+    sele_df = pd.DataFrame({'geneID_alias': da.apply(_choose_alias, axis=1)})
+    sele_df.index = da.index
+    sele_df.index.names=['geneID'] # make consistent with emapp final results for merging
+    outfile = '21.geneID.geneAlias.tsv'
+    sele_df.to_csv(outfile, sep='\t', index=True, header=False) #quotechar='')
+    cp._info('save full alias df to %s' % outfile)    
 
 
 # extract human, drome, top1 from *allhits.cell.uid.pn.gd.gn.tax.tn.dis.tsv
 # gene names are sorted by prost distance
+# first generate an all-in-one data frame: {id, top1, human, drome}
+# then use _choose_alias to solve the priority
 def ann_merge(args):
     assert len(args)==2, 'Usage: python proc_coral_samap.py ann_merge in.allhits.cell.uid.pn.gd.gn.tax.tn.dis.tsv outfile'
     infile = args[0]
     outfile = args[1]
     # load data
-    df = pd.read_csv(infile, sep='\t', names=['Query_gene_ID','Uniprot_ID','Protein_name','Gene_name','Taxon_ID','Taxon_name','PROST_distance'])
+    df = pd.read_csv(infile, sep='\t', names=['Query_gene_ID','Uniprot_ID','Protein_name','Gene_name','Taxon_ID','Taxon_name','PROST_distance'], dtype=str)
     # filter _NA_ gene names
     df=df.loc[df['Gene_name']!='_NA_']
 
@@ -277,6 +571,7 @@ def ann_merge(args):
     f = lambda x: ','.join(map(str, x.sort_values(by='PROST_distance', key=lambda col: col.astype(float))['Gene_name'].tolist()))
 
     # extract human hits
+    # No _NA_ then this line is not working and gives  "ValueError: cannot insert Query_gene_ID, already exists"
     dh = df.loc[df['Taxon_ID']== '9606'] # after mixing with _NA_, a string is needed
     #dh = dh.groupby('Query_gene_ID')['Gene_name'].apply(f).reset_index()
     dh = dh.groupby('Query_gene_ID').apply(f).reset_index()
@@ -335,7 +630,10 @@ def ann_merge(args):
     cp._info('save truncated(50) alias df to %s' % outfile)
 
 
+
+
 # merge prost alias into emapper final names
+# for merging Jake's ppl output (emapper.hy_table_final.tsv) and prost 21.hy.geneAlias.tsv (with header{gene_ID, geneID  prost_alias})
 def ann_merge_alias(args):
     assert len(args) == 3, 'Usage: python proc_coral_samap.py ann_merge_alias aten_emapper_names_table_final.tsv 21.geneID.geneAlias.tsv aten_gene_alias.tsv'
     emapper_file = args[0]

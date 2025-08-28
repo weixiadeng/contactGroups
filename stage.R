@@ -24,21 +24,614 @@ library(goseq)
 #BiocManager::install("goseq")
 #BiocManager::install("GO.db")
 
-setwd('C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw')
+setwd('C:\\Users\\kjia\\workspace\\coral\\stage.sym')
 
 rm(list=ls())
 source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
-objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\00.objs.at_ad_nt_sp_xe_hy.rds')
+objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\03.objs.atc_adc_nnt_sp_xe_hy.umap.rds')
 
-#load('ad3456.clean.sym_split.rd')
-load('ad3456.clean.sym_split.filtered.rd') # after remove small clusters
-load('wgcna.bwnet.ad3456.split.rd')
+###################################################
+# coral algal transcript DE marker dotplot 20250709
+## output.klog2::- coral symbiont sym dotplots 20250709 20250811
 
-obj <- ad3456.clean
+setwd('C:\\Users\\kjia\\workspace\\coral\\stage.sym')
+pref <- 'ad'
+pref <- 'at'
+while(TRUE){
 
-# 06.ad2all.sym_split.summary.vec2.tsv # alias for heatmap
-# 06.ad2all.sym_split.summary.r.vec2.tsv # alias for dotplot
+# load object and filter <5 umis genes
+#obj.sym <- readRDS(paste0('00.',pref,'.symb.raw.rds'))
+#gene_totals <- Matrix::rowSums(GetAssayData(obj.sym, layer = "counts"))
+#genes_to_keep <- names(gene_totals[gene_totals >= 5])
+#obj <- subset(obj.sym, features = genes_to_keep)
+#obj <- std_seurat_ppl(obj)
 
+obj <- readRDS(paste0('00.',pref,'.symb.std.rds'))
+
+## goseq params
+goseq_params <- list(
+  gene.vector = NULL, # vector of binary values (0/1) for genes: vector {aten-0001s.g1: 0/1}
+  gene2go = NULL,
+  gene.lengths = NULL,
+  top_n = 150
+)
+# load gene.lengths
+gl<-read.csv('symb.gene.lengths.tsv', sep='\t', header=FALSE)
+gene.lengths <- setNames(gl$V2,  gsub("_", "-", gl$V1))
+
+# load gene2go
+df <- read.csv('symb.gene2go.tsv', sep='\t', header=FALSE)
+df$V1 <- gsub("_", "-", df$V1)
+gene2go <- split(df$V2, df$V1)
+
+# assemble params and run goseq
+goseq_params$gene.lengths <- gene.lengths
+goseq_params$gene2go <- gene2go
+
+
+# mapping files from : ~/workspace/coral/stage.tf 
+# *.cell_type_tree_order.merged_clusters_id.tsv
+# 06.*2all.merged_clusters.summary.r.vec2.tsv
+
+# *.cell_type_tree_order.sym_split_id.tsv
+# 06.*2all.sym_split.summary.r.vec2.tsv
+print('load std obj ...')
+obj <- readRDS(paste0('00.',pref,'.symb.std.rds'))
+
+ordered_clusters <- read.table(file = paste0(pref, ".sym_split_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+obj$sym_split <- factor(obj$sym_split, levels=ordered_clusters)
+Idents(obj) <- obj$sym_split
+
+#print("saving std objs ..")
+#saveRDS(obj, file=paste0('00.',pref,'.symb.std.rds'))
+
+xn_map <- read.csv(paste0("06.",pref, "2all.sym_split.summary.r.vec2.tsv"), header = TRUE, sep = "\t")
+yn_map <- read.csv(paste0("symb.gene_alias.all.tsv"), header = TRUE, sep = "\t")
+
+generate_cluster_dotplots_withmaps(obj, yn_map, xn_map, ordered_clusters, goseq_params, pref)
+                   
+
+break
+}
+
+
+## add marker gene annotation 20250814
+# output gene list for each cluster
+## sandbox.R:: ## dotplot genes output 20250813
+# kjia@DESKTOP-L0MMU09 ~/workspace/coral/stage.sym/marker_gene_annotations 2025-08-14 16:00:38
+# $ cp ../gene_annotations/symb.merged_annotaitons.tsv .
+setwd("C:\\Users\\kjia\\workspace\\coral\\stage.sym\\marker_gene_annotations")
+
+#pref <- 'ad'
+pref <- 'at'
+
+obj <- readRDS(paste0('../00.',pref,'.symb.std.rds'))
+
+cluster_name <- 'sym_split'
+Idents(obj) <- obj@meta.data[[cluster_name]]
+
+marker_genes <- list()
+for(i in unique(Idents(obj))){
+  nc = sum(Idents(obj)==i)
+  if(nc<3){
+    message(glue("skip {i} for low cell number: {nc}"))
+    next
+  }
+  de.genes.df <- FindMarkers(obj, ident.1=i, only.pos = T)
+  if (nrow(de.genes.df) == 0) {
+    message(paste0("No markers found in ",i))
+    next
+  }
+  
+  # filter marker genes
+  cluster_markers_tibble <- as_tibble(rownames_to_column(de.genes.df, var = "gene"))
+  genes_for_dotplot <- cluster_markers_tibble %>%
+    filter(avg_log2FC > 0, p_val_adj < 0.05) %>% ## filter rows
+    dplyr::arrange(p_val_adj, desc(avg_log2FC)) %>% ## sort filter results first by p_val_adj ascending, then avg_log2FC decending
+    pull(gene) ## get gene column value of previous result as a vector
+  
+  marker_genes[[i]] <- genes_for_dotplot
+  outfile <- paste0(pref,'.dotplot.',i,'.gene.list')
+  print(paste0('save ',length(marker_genes[[i]]),' to ', outfile))
+  writeLines(genes_for_dotplot, outfile)
+}
+saveRDS(marker_genes, file=paste0(pref,'.marker_genes.',cluster_name,'.rds'))
+
+###################################################
+# coral top 150 algal transcript dotplot 20250709
+## 20250813 add gene list output for annotation file generation
+## output.klog2::- coral gene annotation list 20250813
+
+setwd('C:\\Users\\kjia\\workspace\\coral\\stage.sym')
+#pref <- 'ad'
+pref <- 'at'
+
+while(TRUE){ 
+# initialize obj.sym
+obj.sym <- readRDS(paste0('00.',pref,'.symb.raw.rds'))
+Idents(obj.sym) <- obj.sym$sym_split
+ordered_clusters <- read.table(file = paste0(pref, ".sym_split_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+obj.sym$sym_split <- factor(obj.sym$sym_split, levels=ordered_clusters)
+
+# calcualte total expression and get top 150 gene names
+gene_total <- Matrix::rowSums(GetAssayData(obj.sym, assay = "RNA", layer = "counts"))
+top_genes <- names(sort(gene_total, decreasing = TRUE))[1:150]
+
+# for gene annotation file
+all_genes_ordered <- names(sort(gene_total, decreasing = TRUE))
+print(paste0('output gene list to: ', pref,'.symb.all_gene.list'))
+writeLines(all_genes_ordered, paste0(pref,'.symb.all_gene.list'))
+
+# generate dotplot
+fp <- Seurat::DotPlot(object = obj.sym, features = rev(top_genes), cols = "RdYlBu", group.by = "sym_split") + coord_flip() +
+  theme(axis.text.x = element_text(hjust = 1, angle = 90))
+
+gb<-ggplot_build(fp)
+# cluster names
+xdf <-data.frame(idx= gb$layout$panel_params[[1]]$x$get_labels())
+xn_map <- read.csv(paste0("06.",pref, "2all.sym_split.summary.r.vec2.tsv"), header = TRUE, sep = "\t")
+x_names <- left_join(xdf, xn_map, by = "idx") %>% distinct(idx, .keep_all=T)
+
+# gene names
+ystr <- gb$layout$panel_params[[1]]$y$get_labels()
+ystr <- gsub("-","_",ystr)
+ydf <-data.frame(geneID=ystr)
+yn_map <- read.csv(paste0("symb.gene_alias.all.tsv"), header = TRUE, sep = "\t")
+y_names <- left_join(ydf, yn_map, by = "geneID") %>% mutate(geneID = coalesce(gene_alias, geneID)) %>% dplyr::select(-gene_alias) 
+
+fp <- fp + scale_x_discrete(labels = y_names$geneID) + scale_y_discrete(labels=x_names$alias)
+
+ggsave(paste0("dotplot.",pref,"_symb.top150.sym_split.pdf"), plot = fp, width = 30, height = (length(top_genes) * (1/6)) + 20)
+
+break
+}
+
+###################################################
+# coral algal transcript vlnplot barplot 20260703
+
+## debug
+setwd("C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw")
+
+
+## load raw ad data
+while(TRUE){
+pref <- "ad323"
+d <- Read10X(data.dir = paste0("./",pref), gene.column=1)
+gm <- grep("^symbB", rownames(d), value = TRUE)
+print(paste0("gm: ", length(gm)))
+
+obj <- CreateSeuratObject(counts=d, project=pref, min.cells=3, min.features=0)
+gs <- grep("^symbB", rownames(obj), value = TRUE)
+print(paste0("gs: ", length(gs)))
+break
+}
+# 3: 119, 4: 123, 5: 3718, 6: 5591
+
+# rm(adfull)
+adfull <- readRDS('00.ad3456.full.raw.rds')
+obj <- adfull
+# add apo/sym label
+obj$sym_label <- ifelse(obj$orig.ident %in% c('ad3', 'ad4'), 'apo', 
+                                 ifelse(obj$orig.ident %in% c('ad5', 'ad6'), 'sym', NA)) 
+
+
+# get all symb genes
+sym.genes <- grep("^symbB", rownames(obj), value = TRUE)
+sym.counts <- GetAssayData(obj, layer = "counts")
+sym.counts <- sym.counts[rownames(sym.counts) %in% sym.genes, colnames(objs[['ad']])]
+obj.sym <- CreateSeuratObject(counts = sym.counts)
+
+VlnPlot(obj.sym, features = c("nCount_RNA", "nFeature_RNA"), group.by = "orig.ident", pt.size = 0.0, ncol = 1)
+
+
+#obj.sym@meta.data <- objs[['ad']]@meta.data[colnames(obj.sym), ]
+obj.sym$sym_split <- objs[['ad']]$sym_split
+
+VlnPlot(obj.sym, features = c("nCount_RNA", "nFeature_RNA"), group.by = "sym_split", pt.size = 0.0, ncol = 1)
+
+
+
+
+###############
+setwd("C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw")
+
+## load raw ad data
+d <- Read10X(data.dir = "./ad323", gene.column=1)
+ad323 <- CreateSeuratObject(counts=d, project="ad323", min.cells=3, min.features=0)
+
+d <- Read10X(data.dir = "./ad423", gene.column=1)
+ad423 <- CreateSeuratObject(counts=d, project="ad423", min.cells=3, min.features=0)
+
+d <- Read10X(data.dir = "./ad523", gene.column=1)
+ad523 <- CreateSeuratObject(counts=d, project="ad523", min.cells=3, min.features=0)
+
+d <- Read10X(data.dir = "./ad623", gene.column=1)
+ad623 <- CreateSeuratObject(counts=d, project="ad623", min.cells=3, min.features=0)
+
+ad3456 <- merge(ad323, y = c(ad423, ad523, ad623), add.cell.ids = c("ad3", "ad4", "ad5", "ad6"), project = "ad3456")
+ad3456[["RNA"]]<-JoinLayers(ad3456[["RNA"]])
+
+adfull <- CreateSeuratObject(counts = ad3456@assays$RNA$counts)
+
+saveRDS(adfull, file=paste0('00.ad3456.full.raw.rds'))
+
+
+## load raw at data
+setwd("C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw")
+d <- Read10X(data.dir = "./at3", gene.column=1)
+at3 <- CreateSeuratObject(counts=d, project="at3", min.cells=3, min.features=0)
+
+d <- Read10X(data.dir = "./at4", gene.column=1)
+at4 <- CreateSeuratObject(counts=d, project="at4", min.cells=3, min.features=0)
+
+d <- Read10X(data.dir = "./at5", gene.column=1)
+at5 <- CreateSeuratObject(counts=d, project="at5", min.cells=3, min.features=0)
+
+at345 <- merge(at3, y = c(at4, at5), add.cell.ids = c("at3", "at4", "at5"), project = "at345")
+at345[["RNA"]]<-JoinLayers(at345[["RNA"]])
+
+atfull <- CreateSeuratObject(counts = at345@assays$RNA$counts)
+saveRDS(atfull, file=paste0('00.at345.full.raw.rds'))
+
+
+
+# generate sym only seurat object
+setwd('C:\\Users\\kjia\\workspace\\coral\\stage.sym')
+adfull <- readRDS('00.ad3456.full.raw.rds')
+obj <- adfull
+pref <- 'ad'
+
+atfull <- readRDS('00.at345.full.raw.rds')
+obj <- atfull
+pref <- 'at'
+
+# get all symb genes
+sym.genes <- grep("^symbB", rownames(obj), value = TRUE)
+sym.counts <- GetAssayData(obj, layer = "counts")
+sym.counts <- sym.counts[rownames(sym.counts) %in% sym.genes, colnames(objs[[pref]])]
+
+# create symb only object
+obj.sym <- CreateSeuratObject(counts = sym.counts)
+obj.sym$cell_type <- objs[[pref]]$cell_type
+obj.sym$sym_split <- objs[[pref]]$sym_split
+
+saveRDS(obj.sym, file=paste0('00.',pref,'.symb.raw.rds'))
+
+
+while(TRUE){
+  
+## Violin plot by cell type 
+Idents(obj.sym) <- obj.sym$cell_type
+ordered_clusters <- read.table(file = paste0(pref, ".cell_type_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+#levels(obj.sym) <- factor(ordered_clusters)
+obj.sym$cell_type <- factor(obj.sym$cell_type, levels=ordered_clusters)
+
+fp <- VlnPlot(obj.sym, features = c("nCount_RNA", "nFeature_RNA"), group.by = "cell_type", pt.size = 0.0, ncol = 1)
+ggsave(paste0("vlnplot.",pref,"_symb.UMI.cell_type.pdf"), plot = fp, width = 48, height = 24)
+
+## Violin plot by sym split
+Idents(obj.sym) <- obj.sym$sym_split
+ordered_clusters <- read.table(file = paste0(pref, ".sym_split_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+#levels(obj.sym) <- factor(ordered_clusters)
+obj.sym$sym_split <- factor(obj.sym$sym_split, levels=ordered_clusters)
+
+### all-in-one
+fp <- VlnPlot(obj.sym, features = c("nCount_RNA","nFeature_RNA"), group.by = "sym_split", pt.size = 0.0, ncol=1) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "none")
+gb<-ggplot_build(fp)
+xstr <- gb$layout$panel_params[[1]]$x$get_labels()
+xdf <-data.frame(idx=xstr)
+xn_map <- read.csv(paste0("06.",pref, "2all.sym_split.summary.r.vec2.tsv"), header = TRUE, sep = "\t")
+x_names <- left_join(xdf, xn_map, by = "idx") %>% distinct(idx, .keep_all=T)
+fp <- fp + scale_x_discrete(labels=x_names$alias)
+ggsave(paste0("vlnplot.",pref,"_symb.UMI.sym_split.pdf"), plot = fp, width = 48, height = 24)
+
+} # end of violin plot
+
+
+### barplots {nCount_RNA, nfeature} x {cell_type, sym_split}
+while(TRUE){
+# avg_nCount_RNA
+Idents(obj.sym) <- obj.sym$cell_type
+ordered_clusters <- read.table(file = paste0(pref, ".cell_type_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+obj.sym$cell_type <- factor(obj.sym$cell_type, levels=ordered_clusters)
+
+df <- obj.sym@meta.data %>% dplyr::select(all_of('cell_type'), nCount_RNA)
+avg_total_expr <- df %>% group_by(cell_type) %>% summarise(mean_total_expr = mean(nCount_RNA))
+
+# Bar plot cell_type
+fp <- ggplot(avg_total_expr, aes(x = cell_type, y = mean_total_expr)) +
+  geom_col(fill = "steelblue") +
+  theme_minimal() +
+  xlab("Cluster") +
+  ylab("Average Total Expression (nCount_RNA)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+ggsave(filename = paste0("barplot.",pref,"_symb.avg_expr.cell_type.pdf"), plot = fp, width = 16, height = 10)
+
+
+# Bar plot sym_split
+Idents(obj.sym) <- obj.sym$sym_split
+ordered_clusters <- read.table(file = paste0(pref, ".sym_split_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+obj.sym$sym_split <- factor(obj.sym$sym_split, levels=ordered_clusters)
+
+df <- obj.sym@meta.data %>% dplyr::select(all_of('sym_split'), nCount_RNA)
+avg_total_expr <- df %>% group_by(sym_split) %>% summarise(mean_total_expr = mean(nCount_RNA))
+
+fp <- ggplot(avg_total_expr, aes(x = sym_split, y = mean_total_expr)) +
+  geom_col(fill = "steelblue") +
+  theme_minimal() +
+  xlab("Cluster") +
+  ylab("Average Total Expression (nCount_RNA)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+gb<-ggplot_build(fp)
+xstr <- gb$layout$panel_params[[1]]$x$get_labels()
+xdf <-data.frame(idx=xstr)
+xn_map <- read.csv(paste0("06.",pref, "2all.sym_split.summary.r.vec2.tsv"), header = TRUE, sep = "\t")
+x_names <- left_join(xdf, xn_map, by = "idx") %>% distinct(idx, .keep_all=T)
+fp <- fp + scale_x_discrete(labels=x_names$alias)
+
+ggsave(filename = paste0("barplot.",pref,"_symb.avg_expr.sym_split.pdf"), plot = fp, width = 16, height = 10)
+
+#break
+#}
+
+### barplots nFeature_RNA
+#while(TRUE){
+Idents(obj.sym) <- obj.sym$cell_type
+ordered_clusters <- read.table(file = paste0(pref, ".cell_type_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+obj.sym$cell_type <- factor(obj.sym$cell_type, levels=ordered_clusters)
+
+df <- obj.sym@meta.data %>% dplyr::select(all_of('cell_type'), nFeature_RNA)
+avg_total_expr <- df %>% group_by(cell_type) %>% summarise(mean_total_expr = mean(nFeature_RNA))
+
+# Bar plot cell_type
+fp <- ggplot(avg_total_expr, aes(x = cell_type, y = mean_total_expr)) +
+  geom_col(fill = "steelblue") +
+  theme_minimal() +
+  xlab("Cluster") +
+  ylab("Average Total Expression (nFeature_RNA)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+ggsave(filename = paste0("barplot.",pref,"_symb.avg_nfeature.cell_type.pdf"), plot = fp, width = 16, height = 10)
+
+
+# Bar plot sym_split
+Idents(obj.sym) <- obj.sym$sym_split
+ordered_clusters <- read.table(file = paste0(pref, ".sym_split_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+obj.sym$sym_split <- factor(obj.sym$sym_split, levels=ordered_clusters)
+
+df <- obj.sym@meta.data %>% dplyr::select(all_of('sym_split'), nFeature_RNA)
+avg_total_expr <- df %>% group_by(sym_split) %>% summarise(mean_total_expr = mean(nFeature_RNA))
+
+fp <- ggplot(avg_total_expr, aes(x = sym_split, y = mean_total_expr)) +
+  geom_col(fill = "steelblue") +
+  theme_minimal() +
+  xlab("Cluster") +
+  ylab("Average Total Expression (nFeature_RNA)") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+gb<-ggplot_build(fp)
+xstr <- gb$layout$panel_params[[1]]$x$get_labels()
+xdf <-data.frame(idx=xstr)
+xn_map <- read.csv(paste0("06.",pref, "2all.sym_split.summary.r.vec2.tsv"), header = TRUE, sep = "\t")
+x_names <- left_join(xdf, xn_map, by = "idx") %>% distinct(idx, .keep_all=T)
+fp <- fp + scale_x_discrete(labels=x_names$alias)
+
+ggsave(filename = paste0("barplot.",pref,"_symb.avg_nfeature.sym_split.pdf"), plot = fp, width = 16, height = 10)
+break
+}
+
+
+
+##### discard
+
+### ncount
+fp <- VlnPlot(obj.sym, features = "nCount_RNA", group.by = "sym_split", pt.size = 0.0) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "none")
+fp <- fp + scale_x_discrete(labels=x_names$alias)
+ggsave(paste0("vlnplot.",pref,"_symb.ncount.sym_split.pdf"), plot = fp, width = 48, height = 16)
+
+### nfeature
+fp <- VlnPlot(obj.sym, features = "nFeature_RNA", group.by = "sym_split", pt.size = 0.0) + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "none")
+fp <- fp + scale_x_discrete(labels=x_names$alias)
+ggsave(paste0("vlnplot.",pref,"_symb.nfeature.sym_split.pdf"), plot = fp, width = 48, height = 16)
+
+# fp <- VlnPlot(obj.sym, features = "nCount_RNA", group.by = "cell_type", pt.size = 0.0) +   ggtitle(paste0(pref, " symbiont UMI Counts by Cell Type"))
+# ggsave(paste0("vlnplot.",pref,"_symb.UMI.cell_type.pdf"), plot = fp, width = 48, height = 12)
+
+
+###################################################
+# coral algal transcript emapper annotations 20250709
+setwd('C:\\Users\\kjia\\workspace\\coral\\emapper.annotations')
+
+while(TRUE){
+pref <- "emapper.symb"
+
+human_genes <- read_tsv("human_proteinIDS_geneNAMES.txt", show_col_types = F)
+chlre_genes <- read_tsv("chlre.gene_names.tsv", show_col_types = F)
+
+emapper_orthotable <- read_tsv(paste0(pref, "/", "out.emapper.orthologs"), skip = 4)
+emapper_orthotable$orthologs <- gsub("\\*","", emapper_orthotable$orthologs)
+
+protein2gene_lookup <- read_tsv(paste0(pref, "/", "lookup_protID2geneID.tsv"))
+transcript2gene_lookup<- read_tsv(paste0(pref, "/", "lookup_transID2geneID.tsv"))
+
+
+# get human hits
+human_orthos <- emapper_orthotable %>%
+  filter(species == "Homo sapiens(9606)") %>%
+  separate_rows(orthologs, sep = ",") %>%
+  left_join(human_genes, by = c("orthologs" = "Protein_stable_ID"))
+
+# patch NA gene_name from orthologs column
+human_orthos$Gene_name[is.na(human_orthos$Gene_name)] <- human_orthos$orthologs[is.na(human_orthos$Gene_name)]
+
+# Column `query` is not found.
+# need manually remove "#" in front of query in out.emapper.orthologs
+human_orthos <- human_orthos %>%
+  group_by(query) %>%
+  mutate(human_ortholog_symbols = paste(Gene_name, collapse = ","), human_proteinIDs = paste(orthologs, collapse = ","), human_geneIDs = paste(Gene_stable_ID, collapse = ",")) %>%
+  dplyr::rename(proteinID = query, human_orth_type = orth_type) %>%
+  left_join(protein2gene_lookup) %>%
+  ungroup() %>%
+  dplyr::select(proteinID, geneID, human_orth_type, human_proteinIDs, human_geneIDs, human_ortholog_symbols) %>%
+  unique()
+
+
+# get chlre hits
+chlre_orthos <- emapper_orthotable %>%
+  filter(species == "Chlamydomonas reinhardtii(3055)") %>%
+  separate_rows(orthologs, sep = ",") %>%
+  left_join(chlre_genes, by = c("orthologs" = "Protein_stable_ID"))
+
+# patch NA gene_name from orthologs column
+chlre_orthos$Gene_name[is.na(chlre_orthos$Gene_name)] <- chlre_orthos$orthologs[is.na(chlre_orthos$Gene_name)]
+
+# Column `query` is not found.
+# need manually remove "#" in front of query in out.emapper.orthologs
+chlre_orthos <- chlre_orthos %>%
+  group_by(query) %>%
+  mutate(chlre_ortholog_symbols = paste(Gene_name, collapse = ","), chlre_proteinIDs = paste(orthologs, collapse = ","), chlre_geneIDs = paste(Gene_stable_ID, collapse = ",")) %>%
+  dplyr::rename(proteinID = query, chlre_orth_type = orth_type) %>%
+  left_join(protein2gene_lookup) %>%
+  ungroup() %>%
+  dplyr::select(proteinID, geneID, chlre_orth_type, chlre_proteinIDs, chlre_geneIDs, chlre_ortholog_symbols) %>%
+  unique()
+
+final_names <- tibble(geneID = unique(transcript2gene_lookup$geneID)) %>%
+  left_join(human_orthos) %>%
+  left_join(chlre_orthos)
+
+final_names <- final_names %>% add_column(final_emapper_name = final_names$geneID)
+
+final_names$final_emapper_name[!is.na(final_names$human_ortholog_symbols)] <- paste0(final_names$geneID[!is.na(final_names$human_ortholog_symbols)],
+                                                                                     " ",
+                                                                                     final_names$human_orth_type[!is.na(final_names$human_ortholog_symbols)],
+                                                                                     " hs-",
+                                                                                     final_names$human_ortholog_symbols[!is.na(final_names$human_ortholog_symbols)])
+
+
+
+final_names$final_emapper_name[!is.na(final_names$chlre_ortholog_symbols)] <- paste0(final_names$geneID[!is.na(final_names$chlre_ortholog_symbols)],
+                                                                                     " ",
+                                                                                     final_names$chlre_orth_type[!is.na(final_names$chlre_ortholog_symbols)],
+                                                                                     " chlre-",
+                                                                                     final_names$chlre_ortholog_symbols[!is.na(final_names$chlre_ortholog_symbols)])
+
+
+final_names$final_emapper_name <- gsub("_","-", final_names$final_emapper_name)
+
+write_tsv(final_names, file = paste0(pref,"_table_final.tsv"))
+print(paste0('Save to ', paste0(pref,"_table_final.tsv")))
+break
+}
+
+###################################################
+# cell type tree general 20250709
+
+# PC version
+#obj: seurat object
+npc <- 40
+pcs_df <- as.data.frame(Embeddings(obj, reduction = "pca")[, 1:npc])
+pcs_df$cell_type <- obj$cell_type 
+avg_pcs <- pcs_df %>% group_by(cell_type) %>% summarise(across(starts_with("PC"), mean), .groups = "drop")
+rownames(avg_pcs) <- avg_pcs$cell_type
+write.tree(nj(dist(avg_pcs)), file = paste0("tree.",pref,".cell_type.40pc.nwk"))
+
+
+# highly variable gene version
+ngenes <- 2000
+obj <- FindVariableFeatures(obj, selection.method = "vst", nfeatures = ngenes)
+hvg_genes <- VariableFeatures(obj)
+avg_expr <- AverageExpression(obj, assay = "RNA", layer="data", group.by = 'cell_type')
+avg_sub <- avg_expr$RNA[hvg_genes, , drop = FALSE]
+tree <- nj(dist(t(avg_sub)))
+write.tree(tree, file = paste0("tree.",pref,".cell_type.hvg2000.nwk"))
+
+
+###################################################
+# coral cell type tree with samap names
+setwd("C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw")
+pref <- 'ad'
+pref <- 'at'
+
+obj <- objs[[pref]]
+pcs <- Embeddings(obj, reduction = "pca")[, 1:40]
+pcs_df <- as.data.frame(pcs)
+pcs_df$cell_type <- obj$cell_type
+
+avg_pcs <- pcs_df %>% group_by(cell_type) %>% summarise(across(starts_with("PC"), mean), .groups = "drop")
+rownames(avg_pcs) <- avg_pcs$cell_type
+tree <- nj(dist(avg_pcs))
+
+plot(tree)
+write.tree(tree, file = paste0("tree.",pref,".cell_type.40pc.nwk"))
+
+###################################################
+# coral replace ad at objects update all-in-one object
+
+setwd("C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw")
+
+# ad
+#load('ad3456_full_std.rd') # ad3456.std length(rowname(ad3456.std)) = 27587
+load('ad3456.clean.sym_split.rd') # yield ad3456.clean length(rowname(ad3456.clean)) = 21038
+
+
+std_obj <- ad3456.clean
+
+# check consistency
+obj <- objs[['ad']]
+
+length(unique(obj$sym_split))
+length(unique(std_obj$sym_split))
+
+v1 <- GetAssayData(obj, assay = "RNA", slot = "counts")[, colnames(obj)[1]]
+v2 <- GetAssayData(std_obj, assay = "RNA", slot = "counts")[, colnames(std_obj)[1]]
+identical(v1,v2) # true
+
+# validate unique(objs[['ad']]$samap_family) == "~/workspace/coral/samap/output.merged_clusters_cell_type_family/ad/05.ad2all_merged_clusters_desc_0.40.tsv"
+# also $ diff 05.ad2all_merged_clusters_summary_0.40.tsv ~/workspace/coral/samap/output.merged_clusters_cell_type_family/ad/05.ad2all_merged_clusters_desc_0.40.tsv == TRUE
+write.table(unique(objs[['ad']]$cell_type), file = "t.tsv", sep = "\t", quote = FALSE, col.names = FALSE)
+
+
+write.table(std_obj$merged_clusters, file = "ad3456.clean.merged_clusters.allcells.tsv", sep = "\t", quote = FALSE, col.names = FALSE)
+# $ dos2unix ad3456.clean.merged_clusters.allcells.tsv
+# $ awk -F '\t' 'BEGIN {print "index\tsamap_family"} FNR==NR{a[$1]=$2;next} {if(a[$2]!="") print $1"\t"a[$2]}' 05.ad2all_merged_clusters_summary_0.40.tsv ad3456.clean.merged_clusters.allcells.tsv > 20.ad.samap_cluster.tsv
+
+clustering_data <- read.table('20.ad.samap_cluster.tsv', header = TRUE, sep = "\t", row.names = 1)
+col_name <- 'samap_family'
+std_obj@meta.data[[col_name]] <- clustering_data[[col_name]][match(rownames(std_obj@meta.data), rownames(clustering_data))]
+Idents(std_obj) <- std_obj$samap_family
+std_obj$cell_type <- std_obj$samap_family
+std_obj$cell_type_family <- std_obj$samap_family
+saveRDS(std_obj, file='20.ad3456.clean.sym_split.samap_family.rds')
+
+new.ad <- readRDS('20.ad3456.clean.sym_split.samap_family.rds')
+old.ad <- objs[['ad']]
+saveRDS(old.ad, file='bak.objs_ad.wo_small_sym_split_clusters.rds')
+objs[['ad']] <- new.ad
+saveRDS(objs, file='03.objs.atc_adc_nnt_sp_xe_hy.umap.rds')
+
+
+# at (do not need to change since it is not filtered the small sym_split clusters )
+
+#01.at345.clean.samap_family.rd
+# load('01.at345.clean.samap_family.rd') # std_obj with 26288 cells == old objs[['at']]
+# load('at345.clean.sym_split_v2.rd') # at345.clean with 26288 cells == old objs[['at']]
+setwd('C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw')
+load('at345.clean.sym_split.rd') # at345.clean
+std_obj <- at345.clean
+
+setwd('C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw\\archive\\stage.ppl.v0')
+load('at345.clean.sym_split.RData')
+
+
+length(colnames(std_obj)) 
+length(colnames(objs[['at']]))
+
+v1 <- GetAssayData(obj, assay = "RNA", slot = "counts")[, colnames(obj)[1]]
+v2 <- GetAssayData(std_obj, assay = "RNA", slot = "counts")[, colnames(std_obj)[1]]
+identical(v1,v2)
 ###################################################
 # coral figures
 rm(list=ls())
@@ -49,6 +642,7 @@ objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\02.o
 setwd('C:\\Users\\kjia\\workspace\\coral\\figures')
 
 ## UMAP of ad at color cells by cell type family
+#DimPlot(objs[['ad']], reduction = "umap", group.by = "cell_type", label = TRUE) + ggtitle("Acropora digitifera UMAP by Cell Type")
 
 fp <- DimPlot(objs[['ad']], reduction = "umap", group.by = "cell_type", label = TRUE) + ggtitle("Acropora digitifera UMAP by Cell Type")
 ggsave("umap.ad.cell_type.pdf", plot = fp, width = 32, height = 12)
@@ -67,10 +661,10 @@ ggsave("umap.at.sample_ID.pdf", plot = fp, width = 14, height = 12)
 
 
 ## Violin plot by cell type
-fp <- VlnPlot(objs[['ad']], features = "nCount_RNA", group.by = "cell_type", pt.size = 0.1) +   ggtitle("Acropora digitifera UMI Counts by Cell Type")
+fp <- VlnPlot(objs[['ad']], features = "nCount_RNA", group.by = "cell_type", pt.size = 0.0) +   ggtitle("Acropora digitifera UMI Counts by Cell Type")
 ggsave("vlnplot.ad.UMI.cell_type.pdf", plot = fp, width = 48, height = 12)
 
-fp <- VlnPlot(objs[['at']], features = "nCount_RNA", group.by = "cell_type", pt.size = 0.1) +   ggtitle("Acropora tenuis UMI Counts by Cell Type")
+fp <- VlnPlot(objs[['at']], features = "nCount_RNA", group.by = "cell_type", pt.size = 0.0) +   ggtitle("Acropora tenuis UMI Counts by Cell Type")
 ggsave("vlnplot.at.UMI.cell_type.pdf", plot = fp, width = 48, height = 12)
 
 
@@ -85,118 +679,195 @@ pdf("heatmap.adat.samap.cell_type.pdf", width = 16, height = 12)
 pheatmap(seriation_mat(mat),cluster_rows=F, cluster_cols=F)
 dev.off()
 
+
+# ad2all samap heatmap
+# pheatmap
+# len(np.unique(sm.sams['ad'].adata.obs['merged_clusters'])) = 67
+#$ l --color=none 03.ad*alignment*.blast.*cell_type_family*.tsv |awk 'BEGIN {printf "python proc_coral_samap.py combine_scorefiles \""} {printf "%s ", $1} END{printf "\" 67 04.heatmap.ad2all.merged_clusters_cell_type_family.blast.tsv"}' |sh
+
+library(pheatmap)
+setwd('C:\\Users\\kjia\\workspace\\coral\\samap\\output.merged_clusters_cell_type_family\\ad')
+infile="04.heatmap.ad2all.merged_clusters_cell_type_family.blast.tsv"
+pdf("heatmap.ad2all.samap.cell_type_family.pdf", width = 16, height = 12)
+pheatmap(t(read.table(infile, row.names=1, header=TRUE, sep='\t')),cluster_rows=T)
+dev.off()
+
+setwd('C:\\Users\\kjia\\workspace\\coral\\samap\\output.merged_clusters_cell_type_family\\at')
+infile="04.heatmap.at2all.merged_clusters_cell_type_family.blast.tsv"
+pdf("heatmap.at2all.samap.cell_type_family.pdf", width = 16, height = 12)
+pheatmap(t(read.table(infile, row.names=1, header=TRUE, sep='\t')),cluster_rows=T)
+dev.off()
+
+
 ###################################################
-# cell type marker gene dotplot 20250620
+# other cnidarians cell type marker gene dotplot 20250620
+
+#kjia@DESKTOP-L0MMU09 ~/workspace/coral/stage.dotplot.others 2025-07-01 16:43:37
+#$ cp ~/workspace/coral/emapper.annotations/hy.gene_alias.tsv .
 
 rm(list=ls())
 source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
 
-objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\02.objs.at_ad_nnt_sp_xe_hy.umap.rds')
+#objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\02.objs.at_ad_nnt_sp_xe_hy.umap.rds')
 setwd("C:\\Users\\kjia\\workspace\\coral\\stage.dotplot.others")
 
-pref <- 'sp'
-pref <- 'xe'
-pref <- 'nt'
-obj <- objs[[pref]]
+prefs <- c('sp','xe','nt','hy')
+for(pref in prefs){
+  obj <- objs[[pref]]
+  
+  # generating cell type tree
+  #avg_expr <- AverageExpression(obj, assays = "RNA", layer="data", group.by = 'cell_type')
+  #tree <- nj(dist(t(avg_expr$RNA)))
+  #plot(tree)
+  #ordered_clusters <- ordered_tips_apenj(tree) # gsub("-","_", ordered_tips_apenj(tree))
 
-# generating cell type tree
-avg_expr <- AverageExpression(obj, assays = "RNA", layer="data", group.by = 'cell_type')
-tree <- nj(dist(t(avg_expr$RNA)))
-plot(tree)
-ordered_clusters <- gsub("-","_", ordered_tips_apenj(tree))
-#ordered_clusters <- read.table(file = "ad.merged_clusters_tree_order.tsv", sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
-write.table(ordered_clusters , file = paste0(pref, ".clusters_tree_order.tsv"), sep = "\t", col.names=FALSE, row.names = FALSE, quote = FALSE)
+  pcs <- Embeddings(obj, reduction = "pca")[, 1:40]
+  pcs_df <- as.data.frame(pcs)
+  pcs_df$cell_type <- obj$cell_type
+  
+  avg_pcs <- pcs_df %>% group_by(cell_type) %>% summarise(across(starts_with("PC"), mean), .groups = "drop")
+  rownames(avg_pcs) <- avg_pcs$cell_type
+  tree <- nj(dist(avg_pcs))
+  ordered_clusters <- ordered_tips_apenj(tree)
+  
+  write.table(ordered_clusters , file = paste0(pref, ".clusters_tree_order.tsv"), sep = "\t", col.names=FALSE, row.names = FALSE, quote = FALSE)
+  write.tree(tree, file = paste0("tree.",pref,".cell_type.40pc.nwk"))
+  print(paste0("tree.",pref,".cell_type.40pc.nwk"))
 
-Idents(obj) <- obj$cell_type
-levels(Idents(obj)) <- factor(ordered_clusters)
-
-yn_map <- read.csv(paste0(pref,".gene_alias.tsv"), header = TRUE, sep = "\t")
-#xn_map <- read.csv("06.ad2all.merged_clusters.summary.nj.vec2.tsv", header = TRUE, sep = "\t")
-df_xn_map <- data.frame(idx = ordered_clusters, alias = ordered_clusters, stringsAsFactors = FALSE)
-goseq_params <- NULL
-generate_cluster_dotplots_withmaps(obj, yn_map, df_xn_map, ordered_clusters, goseq_params, pref)
-
-# just for nt
-yn_map <- data.frame(geneID = rownames(obj), gene_alias = rownames(obj), stringsAsFactors = FALSE)
-
-
-# order clusters (discard)
-ordered_clusters <- sort(unique(obj$cell_type))
-Idents(obj) <- obj$cell_type
-levels(Idents(obj)) <- factor(ordered_clusters)
+  Idents(obj) <- obj$cell_type
+  levels(obj) <- factor(ordered_clusters)
+  
+  yn_map <- read.csv(paste0(pref,".gene_alias.tsv"), header = TRUE, sep = "\t")
+  #xn_map <- read.csv("06.ad2all.merged_clusters.summary.nj.vec2.tsv", header = TRUE, sep = "\t")
+  df_xn_map <- data.frame(idx = ordered_clusters, alias = ordered_clusters, stringsAsFactors = FALSE)
+  goseq_params <- NULL
+  generate_cluster_dotplots_withmaps(obj, yn_map, df_xn_map, ordered_clusters, goseq_params, pref)
+}
 
 
+for(pref in prefs){
+  obj <- objs[[pref]]
+  Idents(obj) <- obj$cell_type
+  
+  ordered_clusters <- read.table(file = paste0(pref, ".clusters_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+  #levels(obj) <- factor(ordered_clusters)
+  Idents(obj) <- factor(Idents(obj), levels = ordered_clusters)
+  
+  yn_map <- read.csv(paste0(pref,".gene_alias.tsv"), header = TRUE, sep = "\t")
+  #xn_map <- read.csv("06.ad2all.merged_clusters.summary.nj.vec2.tsv", header = TRUE, sep = "\t")
+  df_xn_map <- data.frame(idx = ordered_clusters, alias = ordered_clusters, stringsAsFactors = FALSE)
+  goseq_params <- NULL
+  generate_cluster_dotplots_withmaps(obj, yn_map, df_xn_map, ordered_clusters, goseq_params, pref)  
+}
 #########################################################
 ## coral transcript factor dotplot tf dotplot 20250620
+## re-generate with correct sorting and with gene annotations 20250818
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+setwd("C:\\Users\\kjia\\workspace\\coral\\stage.tf")
 
-setwd("C:\\Users\\kjia\\workspace\\coral")
-tf <- read.csv("ad.tf.list.tsv", header = FALSE, sep = "\t")
 
-pref <- 'ad'
+## cluster specific tf dotplot
+
 pref <- 'at'
+while(TRUE){
+
 
 obj <- objs[[pref]]
+#cname <- "merged_clusters"
+cname <- "sym_split"
 
-total_de <- c()
-for(i in unique(obj$cell_type)){
-  de.genes.df <- FindMarkers(obj, ident.1=i, only.pos = T)
-  #cluster_markers_tibble <- as_tibble(rownames_to_column(FindMarkers(obj, ident.1=i, only.pos = T), var = "gene"))
-  cluster_markers_tibble <- as_tibble(rownames_to_column(de.genes.df, var = "gene"))
-  
-  de_genes <- cluster_markers_tibble %>%
-    filter(avg_log2FC > 0, p_val_adj < 0.01) %>% ## filter rows
-    dplyr::arrange(p_val_adj, desc(avg_log2FC)) %>% ## sort filter results first by p_val_adj ascending, then avg_log2FC decending
-    #dplyr::slice_head(n = 150) %>%  ## select top 150 rows
-    pull(gene) 
-  
-  total_de <- c(unlist(total_de), unlist(de_genes))
-  print(paste0(i, ":", length(total_de)))
-}
-total_de <- unique(total_de)
-print(total_de)
+tf <- read.csv(paste0(pref,".tf.list.tsv"), header = FALSE, sep = "\t")
+tf$V1 <- gsub("_","-", tf$V1)
 
-common <- intersect(unlist(total_de), unlist(gsub("_","-", tf$V1)))
+ordered_clusters <- read.table(file = paste0(pref, ".cell_type_tree_order.", cname, "_id.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+Idents(obj) <- obj@meta.data[[cname]]
+levels(obj) <- factor(ordered_clusters) # this works. levels(Idents(obj) is wrong
+#Idents(obj) <- factor(Idents(obj), levels = ordered_clusters) this works
+#obj@active.ident <- factor(Idents(obj), levels = ordered_clusters) this works too
 
-# save marker tf
-write.table(common, file = paste0(pref, ".marker_tf.tsv"), sep = "\t", col.names=FALSE, row.names = FALSE, quote = FALSE)
-
-
-
-
-
-## tf dotplot
-
-ordered_clusters <- read.table(file = paste0(pref, ".clusters_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
-Idents(obj) <- obj$cell_type
-levels(Idents(obj)) <- factor(ordered_clusters)
 
 yn_map <- read.csv(paste0(pref,".gene_alias.tsv"), header = TRUE, sep = "\t")
-df_xn_map <- data.frame(idx = ordered_clusters, alias = ordered_clusters, stringsAsFactors = FALSE)
+#xn_map <- data.frame(idx = ordered_clusters, alias = ordered_clusters, stringsAsFactors = FALSE)
+xn_map <- read.csv(paste0("06.", pref,"2all.",cname,".summary.r.vec2.tsv"), header = TRUE, sep = "\t")
 
-for(i in ordered_clusters){
-  gg <- Seurat::DotPlot(seurat_obj, features = genes_present, cols = "RdYlBu", group.by = "cell_type") +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-    ggtitle("Transcript factor DotPlot by Cell Type")
+## goseq params
+goseq_params <- list(
+  gene.vector = NULL, # vector of binary values (0/1) for genes: vector {aten-0001s.g1: 0/1}
+  gene2go = NULL,
+  gene.lengths = NULL,
+  top_n = 150
+)
+# load gene.lengths
+gl<-read.csv(paste0(pref,'.gene.length.tsv'), sep='\t', header=FALSE)
+gene.lengths <- setNames(gl$V2,  gsub("_", "-", gl$V1))
+
+# load gene2go
+df <- read.csv(paste0(pref,'.gene2go.tsv'), sep='\t', header=FALSE)
+df$V1 <- gsub("_", "-", df$V1)
+gene2go <- split(df$V2, df$V1)
+
+# assemble params and run goseq
+goseq_params$gene.lengths <- gene.lengths
+goseq_params$gene2go <- gene2go
+
+
+#genes_for_dotplot <- read.table(file = paste0(pref, ".marker_tf.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+for(i in unique(Idents(obj))){
+  if(sum(Idents(obj) == i)<3){
+    #print(paste0("Cluster ", i, "has ", sum(Idents(obj) == i), " cells, skip"))
+    next
+  }
+  
+  de.genes.df <- FindMarkers(obj, ident.1=i, only.pos = T)
+  if (nrow(de.genes.df) == 0) {
+    message(paste0("No markers found in ",i))
+    next
+  }
+  
+  # filter TF only
+  de.genes.df.selected <- de.genes.df[rownames(de.genes.df) %in% tf$V1, ]
+  
+  # cluster_markers_tibble <- as_tibble(rownames_to_column(de.genes.df, var = "gene"))
+  cluster_markers_tibble <- as_tibble(rownames_to_column(de.genes.df.selected, var = "gene"))
+  
+  de_genes_filered <- cluster_markers_tibble %>%
+    filter(avg_log2FC > 0, p_val_adj < 0.05) %>% ## filter rows
+    dplyr::arrange(p_val_adj, desc(avg_log2FC)) %>% ## sort filter results first by p_val_adj ascending, then avg_log2FC decending
+    #dplyr::slice_head(n = 150) %>%  ## select top 150 rows
+    pull(gene) ## get gene column value of previous result as a vector
+  
+  genes_for_dotplot <- de_genes_filered
+  #genes_for_dotplot <- intersect(unlist(de_genes_filered), unlist(tf$V1))
+  print(paste0(pref, ": ", length(genes_for_dotplot), " TF markers in ",i))
+  if(length(genes_for_dotplot)==0){
+    next
+  }
+  writeLines(genes_for_dotplot, paste0("output/", pref,".",i,".TF.list"))
+  
+  gg <- Seurat::DotPlot(object = obj, features = rev(genes_for_dotplot), cols = "RdYlBu") + coord_flip() +
+    theme(axis.text.x = element_text(hjust = 1, angle = 75))
   
   gb<-ggplot_build(gg)
   # alter gene(y) labels
   ystr <- gb$layout$panel_params[[1]]$y$get_labels()
   ystr <- gsub("-","_",ystr)
   ydf <-data.frame(geneID=ystr)
-
+  #y_names <- left_join(ydf, yn_map, by = "geneID") %>% distinct(geneID, .keep_all=T)
+  
   y_names <- left_join(ydf, yn_map, by = "geneID") %>%
     mutate(geneID = coalesce(gene_alias, geneID)) %>%
     dplyr::select(-gene_alias) 
-
+  # %>% distinct(geneID, .keep_all=T)
+  
   # alter cluster(x) labels
   xstr <- gb$layout$panel_params[[1]]$x$get_labels()
   xdf <-data.frame(idx=xstr)
   x_names <- left_join(xdf, xn_map, by = "idx") %>% distinct(idx, .keep_all=T)
   
   #y_names$final_emapper_name
-  gg<-gg + scale_x_discrete(labels = y_names$geneID) + scale_y_discrete(labels=x_names$alias) + ggtitle(sprintf("%s (%d)", i, sum(Idents(obj) == i)))
+  gg<-gg + scale_x_discrete(labels = y_names$geneID) + scale_y_discrete(labels=x_names$alias)+ ggtitle(sprintf("Marker TF - %s (%d)", i, sum(Idents(obj) == i)))# + theme(plot.title = element_text(size = 35))
   
-  outname <- paste0(pref, "_c_", gsub("/", "_", i), "_tf_dotplot.pdf")
+  outname <- paste0("output/", pref,".",i,".TF_dotplot.pdf")
   
   ggsave(filename = outname,
          plot = gg, 
@@ -205,13 +876,137 @@ for(i in ordered_clusters){
          height = (length(genes_for_dotplot) * (1/6)) + 20, # +2
          units = "in", 
          limitsize = F)
-  count=count+1
-  message(glue("Save to {outname}."))
+  #count=count+1
+  message(glue("Save to {outname}.")) 
+
+  # go enrichment analysis
+  if(is.null(goseq_params$gene.lengths)){
+    message(glue("generate_cluster_dotplots_withmaps()::goseq_pararms$gene.lengths is NULL"))
+    next
+  }
+  # generate gene.vector
+  all.genes <- names(goseq_params$gene.length)
+  #de.genes <- rownames(de.genes.df[de.genes.df$p_val_adj < 0.05 & de.genes.df$avg_log2FC > 0.25, ])
+  
+  gene.vector <- as.integer(all.genes %in% genes_for_dotplot)
+  names(gene.vector) <- all.genes			
+  goseq_params$gene.vector <- gene.vector
+  # run goseq go enrichment analysis
+  go_plot <- go_enrichment(goseq_params)	
+  # save plot
+  outname <- paste0("output/", pref,".",i,".TF_goseq.pdf")
+  ggsave(filename = outname,
+         plot = go_plot, 
+         path = ".",
+         width = 13, # 18
+         height = (length(genes_for_dotplot) * (1/6)) + 20, # +2
+         #height = 9, 
+         units = "in", 
+         limitsize = F)
+  message(glue("Save goseq plot to {outname}."))	
+ 
 }
+
+break
+}
+
+
+
+## all-in-one tf dotplot
+# collect genes
+pref <- 'ad'
+pref <- 'at'
+prefs <- c('at')
+cname <- 'cell_type'
+for(pref in prefs){
+  obj <- objs[[pref]]
+  tf <- read.csv(paste0(pref,".tf.list.tsv"), header = FALSE, sep = "\t")
+  tf$V1 <- gsub("_","-", tf$V1)
+  
+  total_de <- c()
+  count <- 1
+  for(i in unique(obj@meta.data[[cname]])){
+    #print(i)
+    
+    de.genes.df <- FindMarkers(obj, ident.1=i, only.pos = T)
+    #cluster_markers_tibble <- as_tibble(rownames_to_column(FindMarkers(obj, ident.1=i, only.pos = T), var = "gene"))
+    cluster_markers_tibble <- as_tibble(rownames_to_column(de.genes.df, var = "gene"))
+    
+    de_genes <- cluster_markers_tibble %>%
+      filter(avg_log2FC > 0, p_val_adj < 0.01) %>% ## filter rows
+      dplyr::arrange(p_val_adj, desc(avg_log2FC)) %>% ## sort filter results first by p_val_adj ascending, then avg_log2FC decending
+      #dplyr::slice_head(n = 150) %>%  ## select top 150 rows
+      pull(gene) 
+    
+    total_de <- c(unlist(total_de), unlist(de_genes))
+    print(paste0(count, "/", length(unique(obj$cell_type)), " - collecting ", length(de_genes)," DE marker from ",i))
+    count <- count+1
+  }
+  
+  total_de <- unique(total_de)
+  print(paste0("total DE marker in ",pref, ": ",length(total_de)))
+  common <- intersect(unlist(total_de), unlist(tf$V1))
+  print(paste0("total TF marker in ",pref, ": ",length(common)))
+  # save marker tf
+  write.table(common, file = paste0(pref, ".marker_tf.tsv"), sep = "\t", col.names=FALSE, row.names = FALSE, quote = FALSE)
+}
+
+
+## dotplot
+pref <- 'at'
+obj <- objs[[pref]]
+ordered_clusters <- read.table(file = paste0(pref, ".cell_type_tree_order.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+Idents(obj) <- obj@meta.data[[cname]]
+levels(obj) <- factor(ordered_clusters)
+
+yn_map <- read.csv(paste0(pref,".gene_alias.tsv"), header = TRUE, sep = "\t")
+xn_map <- data.frame(idx = ordered_clusters, alias = ordered_clusters, stringsAsFactors = FALSE)
+
+genes_for_dotplot <- read.table(file = paste0(pref, ".marker_tf.tsv"), sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
+while(TRUE){
+  gg <- Seurat::DotPlot(object = obj, features = genes_for_dotplot, cols = "RdYlBu") + coord_flip() +
+  theme(axis.text.x = element_text(size = 24, hjust = 1, angle = 75))
+
+  gb<-ggplot_build(gg)
+  # alter gene(y) labels
+  ystr <- gb$layout$panel_params[[1]]$y$get_labels()
+  ystr <- gsub("-","_",ystr)
+  ydf <-data.frame(geneID=ystr)
+  #y_names <- left_join(ydf, yn_map, by = "geneID") %>% distinct(geneID, .keep_all=T)
+  
+  y_names <- left_join(ydf, yn_map, by = "geneID") %>%
+    mutate(geneID = coalesce(gene_alias, geneID)) %>%
+    dplyr::select(-gene_alias) 
+  # %>% distinct(geneID, .keep_all=T)
+  
+  # alter cluster(x) labels
+  xstr <- gb$layout$panel_params[[1]]$x$get_labels()
+  xdf <-data.frame(idx=xstr)
+  x_names <- left_join(xdf, xn_map, by = "idx") %>% distinct(idx, .keep_all=T)
+  
+  #y_names$final_emapper_name
+  gg<-gg + scale_x_discrete(labels = y_names$geneID) + scale_y_discrete(labels=x_names$alias)+ ggtitle(sprintf("Marker TF dotplot (%s)", pref)) + theme(plot.title = element_text(size = 35))
+  
+  outname <- paste0("output/", pref,".",cname,".TF_dotplot.pdf")
+  
+  ggsave(filename = outname,
+         plot = gg, 
+         path = ".",
+         width = 45, # 18
+         height = (length(genes_for_dotplot) * (1/6)) + 30, # +2
+         units = "in", 
+         limitsize = F)
+  count=count+1
+  message(glue("Save to {outname}.")) 
+  break
+}
+
+
 
 ###################################################
 # Jake's emapper annotation ppl 20250619
 # kjia@DESKTOP-L0MMU09 ~/workspace/coral/emapper.annotations 2025-06-19 15:12:52
+# output.klog2::- coral gene dotplots other cnidarians 20250620
 
 # input files:
 # 
@@ -225,11 +1020,6 @@ for(i in ordered_clusters){
 ## vecw {transcriptID    geneID} = {adig_s0001.g1.t2        adig_s0001.g1}
 # adig.transcriptID_to_geneID_lookup.tsv
 
-## make pseudo table for sp,xe,nt
-# /emapper.annotations/emapper.sp 2025-06-19 15:42:15
-# $ grep ">" queries.fasta |awk 'BEGIN {print "transcriptID\tgeneID"} {printf "%s\t%s\n", substr($1,2) , substr($1,2)}' > lookup_transID2geneID.tsv
-# $ grep ">" queries.fasta |awk 'BEGIN {print "proteinID\tgeneID"} {printf "%s\t%s\n", substr($1,2) , substr($1,2)}' > lookup_protID2geneID.tsv
-
 ## fly gene names vec11 col4: gene_symbol
 # fbgn_fbtr_fbpp_expanded_fb_2022_01.tsv
 
@@ -240,6 +1030,13 @@ for(i in ordered_clusters){
 # goterms_lookup.txt
 
 # output: adig_emapper_names_table_final.tsv
+
+
+## before start R script
+## make pseudo table
+# /emapper.annotations/emapper.sp 2025-06-19 15:42:15
+# $ grep ">" queries.fasta |awk 'BEGIN {print "transcriptID\tgeneID"} {printf "%s\t%s\n", substr($1,2) , substr($1,2)}' > lookup_transID2geneID.tsv
+# $ grep ">" queries.fasta |awk 'BEGIN {print "proteinID\tgeneID"} {printf "%s\t%s\n", substr($1,2) , substr($1,2)}' > lookup_protID2geneID.tsv
 
 setwd("C:\\Users\\kjia\\workspace\\coral\\emapper.annotations")
 
@@ -253,6 +1050,14 @@ goterms_table <- read_tsv("goterms_lookup.txt", col_names = c("go_id", "term"))
 
 pref <- "emapper.sp"
 pref <- "emapper.xe"
+pref <- "emapper.hy"
+pref <- "emapper.nt"
+pref <- "emapper.symb"
+pref <- "emapper.sl"
+pref <- "emapper.ml"
+
+while(TRUE){
+
 emapper_orthotable <- read_tsv(paste0(pref, "/", "out.emapper.orthologs"), skip = 4)
 emapper_orthotable$orthologs <- gsub("\\*","", emapper_orthotable$orthologs)
 
@@ -266,9 +1071,11 @@ human_orthos <- emapper_orthotable %>%
   separate_rows(orthologs, sep = ",") %>%
   left_join(human_genes, by = c("orthologs" = "Protein_stable_ID"))
 
-# aptch NA gene_name from orthologs column
+# patch NA gene_name from orthologs column
 human_orthos$Gene_name[is.na(human_orthos$Gene_name)] <- human_orthos$orthologs[is.na(human_orthos$Gene_name)]
 
+# Column `query` is not found.
+# need manually remove "#" in front of query in out.emapper.orthologs
 human_orthos <- human_orthos %>%
   group_by(query) %>%
   mutate(human_ortholog_symbols = paste(Gene_name, collapse = ","), human_proteinIDs = paste(orthologs, collapse = ","), human_geneIDs = paste(Gene_stable_ID, collapse = ",")) %>%
@@ -285,7 +1092,8 @@ dm_orthos <- emapper_orthotable %>%
   separate_rows(orthologs, sep = ",") %>%
   left_join(fly_genes, by = c("orthologs" = "polypeptide_ID")) 
 
-dm_orthos$Gene_name[is.na(dm_orthos$gene_symbol)] <- dm_orthos$polypeptide_ID[is.na(dm_orthos$gene_symbol)]
+#dm_orthos$Gene_name[is.na(dm_orthos$gene_symbol)] <- dm_orthos$polypeptide_ID[is.na(dm_orthos$gene_symbol)]
+dm_orthos$gene_symbol[is.na(dm_orthos$gene_symbol)] <- dm_orthos$orthologs[is.na(dm_orthos$gene_symbol)]
 
 dm_orthos <- dm_orthos %>%
   group_by(query) %>%
@@ -324,13 +1132,16 @@ final_names$final_emapper_name[!is.na(final_names$human_ortholog_symbols)] <- pa
 final_names$final_emapper_name <- gsub("_","-", final_names$final_emapper_name)
 
 write_tsv(final_names, file = paste0(pref,"_table_final.tsv"))
+print(paste0('Save to ', paste0(pref,"_table_final.tsv")))
 
 
-
+break  
+}
 ###################################################
 # cell type tree one-to-one orthologs 20250617
 # output.klog2: - cell type tree one-to-one orthologs jas method 
-
+# https://satijalab.org/seurat/articles/integration_rpca
+# https://github.com/dunnlab/cellphylo/blob/master/cellphylo_functions.R :: 478
 
 rm(list=ls())
 source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
@@ -382,6 +1193,16 @@ anchors.1to1_all <- anchors
 
 #anchors <- FindIntegrationAnchors(object.list = sub_objs, anchor.features = features)
 combined <- IntegrateData(anchorset = anchors, k.weight=100, features.to.integrate = common_genes)
+#combined <- std_seurat_ppl(combined)
+
+#combined[['integrated']]$data
+
+combined<- ScaleData(combined, verbose=FALSE)
+combined<- RunPCA(combined, npcs=30, verbose=FALSE)
+
+#combined<- RunUMAP(combined, reduction = "pca", dims=UMAP_dim)
+#combined<- FindNeighbors(combined, reduction = "pca", dims = FindNeighbors_dim)
+#combined<- FindClusters(combined, resolution=FindClusters_res)
 
 saveRDS(combined, file = "03.seurat_integrated.at_ad_nt_sp_xe.4456.rds")
 
@@ -410,9 +1231,10 @@ write.tree(allnj, file = "tree.samap.cell_type.allgenes.nwk")
 
 rm(list=ls())
 source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
-objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\01.objs.at_ad_nt_sp_xe_hy.umap.rds')
+objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\03.objs.atc_adc_nnt_sp_xe_hy.umap.rds')
 setwd('C:\\Users\\kjia\\workspace\\coral\\stage.acropora_raw')
-prefs <- c('ad','at','nt','sp','xe','hy')
+# prefs <- c('ad','at','nt','sp','xe','hy')
+prefs <- c('hy')
 
 #pref <- 'ad'
 for(s in prefs){
@@ -444,8 +1266,48 @@ for(pref in prefs){
   write.csv(results_df, paste0(pref, ".de_ratio_", top_n, ".tsv"), row.names = FALSE)
 }
 
+## #################################
+# Create top de ratio barplot with tree order
+rm(list=ls())
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\03.objs.atc_adc_nnt_sp_xe_hy.umap.rds')
+setwd("C:\\Users\\kjia\\workspace\\coral\\stage.t")
 
-## load de_ratio from saved files
+#pref <- 'ad'
+top_n <- 150
+prefs <- c('ad','at','nt','sp','xe','hy')
+for(pref in prefs){
+  df <- read.csv(paste0(pref, ".de_ratio_", top_n, ".tsv"), stringsAsFactors = FALSE)
+  # order clusters
+  cluster_order <- read_csv(paste0(pref,".cell_type_tree_order.tsv"), col_names = FALSE, show_col_types = FALSE)
+  #cluster_order$X1 <- gsub("_", "-", cluster_order$X1)
+  df$cluster <- factor(df$cluster, levels = cluster_order$X1)
+  
+  #write.csv(df$cluster, 'tt0', row.names = FALSE)
+  #write.csv(cluster_order$X1, 'tt1', row.names = FALSE)
+  
+  gplot <- ggplot(df, aes(x = cluster, y = r_top_n)) +
+    geom_bar(stat = "identity", fill = '#F8766D') +   theme_minimal() +
+    ylim(0, 1) +
+    labs( title = paste0("Top DE marker ratio by Cluster (", pref, ")"), x = "Clusters",y = "Ratio") +
+    theme(axis.text.x = element_text(angle = 75, hjust = 1, size = 14))
+  
+  # save to pdf
+  outname = paste0(pref, ".de_ratio_", top_n, ".barplot.pdf")
+  print(outname)
+  if(pref %in% c('ad', 'at')){
+    ggsave(file=outname, plot=gplot, width = 15, height = 12)	  
+  }else{
+    ggsave(file=outname, plot=gplot, width = 20, height = 8)	
+  }
+  
+
+}
+# output: C:\Users\kjia\workspace\coral\stage.t\cell_status\*.de_ratio_150.barplot.pdf
+
+
+## feature plot 
+# load de_ratio from saved files
 for(pref in prefs){
   df <- read.csv(paste0(pref, ".de_ratio_", top_n, ".tsv"), stringsAsFactors = FALSE)
   results <- setNames(as.list(df$r_top_n), df$cluster)
@@ -1018,7 +1880,7 @@ write.table(std_obj$merged_clusters, file = "ad3456.clean.merged_clusters.tsv", 
 # $ awk -F '\t' 'FNR==NR{a[$1]=$2;next} {if(a[$2]!="") print $1"\t"a[$2]}' 05.ad2all_merged_clusters_summary_0.40.tsv ad3456.clean.merged_clusters.tsv > 01.ad3456.samap_cluster.tsv
 # output: 01.ad3456.samap_cluster.tsv (need add {index\tsamap_family} as header)
 
-clustering_data <- read.table('01.ad3456.samap_cluster.tsv', header = TRUE, sep = "\t", row.names = 1)
+clustering_data <- read.table('01.ad3456.samap_cluster.tsv', header = TRUE, sep = "\t", row.names = 1) # kjia@DESKTOP-L0MMU09 ~/workspace/foxd/stage 2025-06-24 14:12:18
 col_name <- 'samap_family'
 std_obj@meta.data[[col_name]] <- clustering_data[[col_name]][match(rownames(std_obj@meta.data), rownames(clustering_data))]
 Idents(std_obj) <- std_obj$samap_family
@@ -1960,7 +2822,7 @@ goseq_params$gene.lengths <- gene.lengths
 # ordered_clusters <- ordered_tips_apenj(obj_nj)
 ordered_clusters <- read.table(file = "ad.merged_clusters_tree_order.tsv", sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
 # ordered_clusters <- read.table(file = "at.merged_clusters_tree_order.tsv", sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
-obj@active.ident <- factor(Idents(obj), levels = ordered_clusters)
+Idents(obj) <- factor(Idents(obj), levels = ordered_clusters)
 
 yn_map <- read.csv("ad.gene_alias.tsv", header = TRUE, sep = "\t")
 #xn_map <- read.csv("05.ad2all_sym_split_summary_0.40.tsv", header = TRUE, sep = "\t")
@@ -2316,7 +3178,7 @@ obj <- ad3456.clean
 
 Idents(obj) <- obj$sym_split
 ordered_clusters <- read.table(file = "ad.sym_split_tree_order.tsv", sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
-obj@active.ident <- factor(Idents(obj), levels = ordered_clusters)
+Idents(obj) <- factor(Idents(obj), levels = ordered_clusters)
 
 # dotplot params
 dotplot_params <- list(
@@ -2415,7 +3277,7 @@ order_genes <- function (x, object, cell.type.order, avg.exp.matrix)
 
 Idents(obj) <- obj$merged_clusters
 ordered_clusters <- read.table(file = "ad.merged_clusters_tree_order.tsv", sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
-obj@active.ident <- factor(Idents(obj), levels = ordered_clusters)
+Idents(obj) <- factor(Idents(obj), levels = ordered_clusters)
 
 # dotplot params
 dotplot_params <- list(
@@ -2518,7 +3380,7 @@ plot(obj_nj, 'u',  edge.color = branch_colors, lwd = branch_thicknesses, cex = 0
 
 ordered_clusters <- ordered_tips_apenj(obj_nj)
 #ordered_clusters <- read.table(file = "ad.sym_split_tree_order.tsv", sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
-obj@active.ident <- factor(Idents(obj), levels = ordered_clusters)
+Idents(obj) <- factor(Idents(obj), levels = ordered_clusters)
 
 
 
@@ -2621,7 +3483,7 @@ obj_nj <- nj(as.dist(as.matrix(read.table("ad3456.wmat.sym_split.tsv", sep='\t',
 plot(obj_nj,'u', cex = 0.7)
 ordered_clusters <- ordered_tips_apenj(obj_nj)
 #ordered_clusters <- read.table(file = "ad.sym_split_tree_order.tsv", sep = "\t", header=FALSE, stringsAsFactors = FALSE)[,1]
-obj@active.ident <- factor(Idents(obj), levels = ordered_clusters)
+Idents(obj) <- factor(Idents(obj), levels = ordered_clusters)
 
 yn_map <- read.csv("ad.gene_alias.tsv", header = TRUE, sep = "\t")
 xn_map <- read.csv("05.ad2all_sym_split_summary_0.40.tsv", header = TRUE, sep = "\t")

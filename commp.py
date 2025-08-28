@@ -21,7 +21,8 @@ import collections
 import subprocess
 from functools import reduce
 
-illab =['/', '+', '?', '*', '&', '$', '\\', ' ', '|', 'X', 'x']
+#illab =['/', '+', '?', '*', '&', '$', '\\', ' ', '|', 'X', 'x']
+illab =['/', '+', '?', '*', '&', '$', '\\', ' ', '|']
 
 gaps = ['.','-',' ','*']
 
@@ -910,16 +911,17 @@ def loadlinesu(filename, ecode=None):
         return lines
 
 # load all lines except for the empty lines
-def loadlines(filename):
+def loadlines(filename, skip=0, ignore=[]):
     with open(filename) as fp:
-        lines = [_f for _f in (line.rstrip() for line in fp) if _f]
-        return lines
+        lines = [_f for _f in (line.rstrip() for line in fp) if (_f and _f[:len(ignore)]!=ignore)]
+        return lines[skip:]
 
 # load lines and break each line into tuples
-def loadtuples(filename, delimiter=' '):
+def loadtuples(filename, delimiter=' ', skip=0, ignore=[]):
     with open(filename) as fp:
-        lines = [_f for _f in (line.rstrip() for line in fp) if _f]
-        return [line.split(delimiter) for line in lines]
+        lines = [_f for _f in (line.rstrip() for line in fp) if _f and _f[:len(ignore)]!=ignore]
+        ret = [line.split(delimiter) for line in lines]
+        return ret[skip:]
 
 # load lines and break each line into tuples with regex
 def loadtuplesregex(filename, regex=' '):

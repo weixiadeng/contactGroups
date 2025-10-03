@@ -28,7 +28,8 @@ setwd('C:\\Users\\kjia\\workspace\\coral\\stage.sym')
 
 rm(list=ls())
 source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
-objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\03.objs.atc_adc_nnt_sp_xe_hy.umap.rds')
+#objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\03.objs.atc_adc_nnt_sp_xe_hy.umap.rds')
+objs <- readRDS('C:\\Users\\kjia\\workspace\\library\\dataset\\seurat_objs\\04.objs.atcn_adcn_nnt_sp_xe_hy.umap.rds')
 
 ###################################################
 # coral algal transcript DE marker dotplot 20250709
@@ -5164,3 +5165,38 @@ VlnPlot(at345_nosym.mc, features = c("nCount_RNA", "nFeature_RNA"), group.by = "
 VlnPlot(ad3456_nosym.mc, features = c("nCount_RNA", "nFeature_RNA"), group.by = "merged_clusters", pt.size = 0.1, ncol = 1)
 
 
+##########################################
+# data collection four Trichoplax 20250929
+# https://www.sciencedirect.com/science/article/pii/S0092867423009170
+
+source('C:\\Users\\kjia\\workspace\\src\\contactGroups\\coral_ppl.R')
+setwd('C:\\Users\\kjia\\workspace\\library\\dataset\\scData.collections\\placozoan_four_species.cell.2023.08\\mendeley')
+
+pref <- 'Tadh'
+prefs <- c('Tadh', 'TrH2', 'Hhon', 'HoiH23')
+for(pref in prefs){
+  
+
+cells_file <- paste0(pref, '.umimatrix.cell_annotations.tsv')
+genes_file <- paste0(pref, '.umimatrix.genes.tsv')
+matrix_file <- paste0(pref, '.umimatrix.mtx.gz')
+
+umi_matrix <- readMM(matrix_file)
+genes <- read.delim(genes_file, header = FALSE)
+rownames(umi_matrix) <- as.character(genes$V1)
+
+cells <- read.delim(cells_file, header = TRUE)
+colnames(umi_matrix) <- as.character(row.names(cells))
+
+obj <- CreateSeuratObject(counts = umi_matrix)
+obj <- AddMetaData(obj, metadata = cells)
+std_obj <- std_seurat_ppl(obj, clustering=FALSE, umap = TRUE)
+saveRDS(std_obj, file=paste0(pref, ".cell.2023.rds"))
+
+}
+
+setwd('C:\\Users\\kjia\\workspace\\library\\dataset\\scData.collections\\placozoan_four_species.cell.2023.08\\seurat_objs')
+for(p in prefs){
+  obj <- readRDS(paste0(p, '.cell.2023.rds'))
+  writeLines(rownames(obj), paste0(p, '.seurat.genes.tsv')) 
+}

@@ -2,6 +2,28 @@ import commp as cp
 import numpy as np
 from collections import defaultdict
 
+# $ awk -F '\t' '{print NF}' nt__v__sp.tsv|sort -u = 3
+def get_ortholog_by_id(args):
+    assert len(args) == 3, 'Usage: python get_ortholog_by_id nt__v__ad.tsv 00.in.foxe.list.tsv outfile'
+    orthofile = args[0]
+    namefile =args[1]
+    outfile = args[2]
+
+    outdict = defaultdict(list)
+    # nv_std_id alison_id
+    for t in cp.loadtuples(namefile, delimiter='\t'):
+        stdid = t[0]
+        alisonid = t[1]
+        for r in cp.loadtuples(orthofile, delimiter='\t'): # has 3 columns
+            if alisonid in [s.strip() for s in r[1].split(',')]:
+                outdict['%s\t%s' % (stdid, alisonid)].extend([s.strip() for s in r[2].split(',')])
+        if len(outdict['%s\t%s' % (stdid, alisonid)]) == 0:
+            outdict['%s\t%s' % (stdid, alisonid)].append('_NA_')
+        
+    with open(outfile, 'w') as fout:
+        fout.write('%s\n' % '\n'.join(['%s\t%s' % (k, ','.join(outdict[k])) for k in sorted(outdict.keys())]))
+    cp._info('save %d orthologs to %s' % (len(outdict), outfile))
+
 
 # ortho one-to-one
 # extract one-to-one orthologs from orthofinder outputs
